@@ -17,7 +17,7 @@ export default function LeadsTable({ leads, onRegenerate, onAvaliar, onEditMensa
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
-            {['Lead', 'Empresa', 'Mensagem Gerada', 'Chars', 'Ações'].map(col => (
+            {['Lead', 'Empresa', 'Mensagem Gerada', 'Chars', 'Envio', 'Ações'].map(col => (
               <th
                 key={col}
                 style={{
@@ -126,6 +126,15 @@ export default function LeadsTable({ leads, onRegenerate, onAvaliar, onEditMensa
                     {lead.mensagem_gerada.length}
                   </span>
                 )}
+              </td>
+
+              {/* Envio */}
+              <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
+                {lead.envio === 'sending' && <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}><span className="spinner" /> Enviando</span>}
+                {lead.envio === 'sent' && <span style={{ color: 'var(--green)', fontSize: '0.75rem', fontFamily: 'Syne, sans-serif', fontWeight: 700 }}>✓ Enviado</span>}
+                {lead.envio === 'error' && <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>✗ Erro</span>}
+                {!lead.envio && lead.email && <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>{lead.email}</span>}
+                {!lead.envio && !lead.email && <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>—</span>}
               </td>
 
               {/* Ações */}

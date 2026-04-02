@@ -4,7 +4,7 @@ import UploadZone from '@/components/bulk/UploadZone'
 import CampaignConfigPanel from '@/components/bulk/CampaignConfig'
 import LeadsTable from '@/components/bulk/LeadsTable'
 import LeadForm from '@/components/manual/LeadForm'
-import { Lead, CampaignConfig, ColumnMapping } from '@/types'
+import { Lead, CampaignConfig } from '@/types'
 import { parseCSV, detectColumnMapping, mapRowsToLeads, exportLeadsToCSV } from '@/lib/csvParser'
 
 type Tab = 'bulk' | 'manual'
@@ -23,6 +23,7 @@ export default function Home() {
   const [originalRows, setOriginalRows] = useState<Record<string, string>[]>([])
   const [step, setStep] = useState<'upload' | 'config' | 'results'>('upload')
   const [generating, setGenerating] = useState(false)
+  const [sending, setSending] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
 
   const handleFile = async (file: File) => {
@@ -80,7 +81,40 @@ export default function Home() {
     }
   }
 
+  const handleSendEmails = async () => {
+    const leadsComEmail = leads.filter(l => l.status === 'done' && l.email && l.mensagem_gerada)
+    if (leadsComEmail.length === 0) {
+      alert('Nenhum lead com e-mail e mensagem gerada.')
+      return
+    }
+    if (!confirm(`Disparar e-mails para ${leadsComEmail.length} leads?`)) return
+    setSending(true)
+    setLeads(prev => prev.map(l =>
+      l.status === 'done' && l.email ? { ...l, envio: 'sending' } : l
+    ))
+    try {
+      const res = await fetch('/api/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leads: leadsComEmail }),
+      })
+      const data = await res.json()
+      const resultMap = new Map(data.results.map((r: { id: string; status: string }) => [r.id, r.status]))
+      setLeads(prev => prev.map(l => ({
+        ...l,
+        envio: resultMap.has(l.id) ? (resultMap.get(l.id) as 'sent' | 'error') : l.envio,
+      })))
+    } catch {
+      alert('Erro no disparo. Tente novamente.')
+      setLeads(prev => prev.map(l => ({ ...l, envio: l.envio === 'sending' ? 'error' : l.envio })))
+    } finally {
+      setSending(false)
+    }
+  }
+
   const done = leads.filter(l => l.status === 'done').length
+  const sent = leads.filter(l => l.envio === 'sent').length
+  const leadsComEmail = leads.filter(l => l.status === 'done' && l.email).length
   const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0
 
   return (
@@ -113,6 +147,7 @@ export default function Home() {
                 <UploadZone onFile={handleFile} />
               </div>
             )}
+
             {step === 'config' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -128,12 +163,16 @@ export default function Home() {
                 </button>
               </div>
             )}
+
             {step === 'results' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
                   <div>
                     <h1 style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '1.5rem' }}>
-                      {generating ? <><span style={{ color: 'var(--accent)' }}>{progress.current}</span>/{progress.total} gerados</> : <><span style={{ color: 'var(--accent)' }}>{done}</span> mensagens prontas</>}
+                      {generating
+                        ? <><span style={{ color: 'var(--accent)' }}>{progress.current}</span>/{progress.total} gerados</>
+                        : <><span style={{ color: 'var(--accent)' }}>{done}</span> mensagens prontas {sent > 0 && <span style={{ color: 'var(--green)', fontSize: '1rem' }}>· {sent} enviados</span>}</>
+                      }
                     </h1>
                     {generating && (
                       <div style={{ marginTop: '8px', background: 'var(--bg)', borderRadius: '100px', height: '4px', width: '200px' }}>
@@ -141,15 +180,39 @@ export default function Home() {
                       </div>
                     )}
                   </div>
+
                   {!generating && done > 0 && (
-                    <button onClick={() => exportLeadsToCSV(leads, originalRows)} style={{ background: 'var(--accent)', color: '#000', border: 'none', borderRadius: '8px', padding: '10px 20px', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>↓ Exportar CSV</button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {leadsComEmail > 0 && (
+                        <button
+                          onClick={handleSendEmails}
+                          disabled={sending}
+                          style={{ background: 'transparent', border: '1px solid var(--green)', borderRadius: '8px', padding: '9px 18px', color: 'var(--green)', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.85rem', cursor: sending ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                        >
+                          {sending ? <><span className="spinner" /> Enviando...</> : `✉ Disparar E-mails (${leadsComEmail})`}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => exportLeadsToCSV(leads, originalRows)}
+                        style={{ background: 'var(--accent)', color: '#000', border: 'none', borderRadius: '8px', padding: '9px 18px', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+                      >
+                        ↓ Exportar CSV
+                      </button>
+                    </div>
                   )}
                 </div>
-                <LeadsTable leads={leads} onRegenerate={handleRegenerate} onAvaliar={(id, av) => setLeads(prev => prev.map(l => l.id === id ? { ...l, avaliacao: av } : l))} onEditMensagem={(id, msg) => setLeads(prev => prev.map(l => l.id === id ? { ...l, mensagem_gerada: msg } : l))} />
+
+                <LeadsTable
+                  leads={leads}
+                  onRegenerate={handleRegenerate}
+                  onAvaliar={(id, av) => setLeads(prev => prev.map(l => l.id === id ? { ...l, avaliacao: av } : l))}
+                  onEditMensagem={(id, msg) => setLeads(prev => prev.map(l => l.id === id ? { ...l, mensagem_gerada: msg } : l))}
+                />
               </div>
             )}
           </div>
         )}
+
         {tab === 'manual' && (
           <div className="fade-in">
             <div style={{ marginBottom: '24px' }}>

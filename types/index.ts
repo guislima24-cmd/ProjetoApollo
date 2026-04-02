@@ -13,6 +13,7 @@ export interface Lead {
   mensagem_gerada?: string
   status: 'pending' | 'generating' | 'done' | 'error'
   avaliacao?: 'up' | 'down'
+  envio?: 'sent' | 'error' | 'sending'
 }
 
 export interface CampaignConfig {
