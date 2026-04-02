@@ -1,6 +1,5 @@
 import Papa from 'papaparse'
 import { Lead, ColumnMapping } from '@/types'
-import { v4 as uuidv4 } from 'crypto'
 
 const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
   nome: ['first name', 'nome', 'first_name', 'firstname', 'name', 'primeiro nome'],
