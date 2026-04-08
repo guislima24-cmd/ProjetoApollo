@@ -127,7 +127,7 @@ export default function Home() {
         </div>
         <div style={{ display: 'flex', gap: '4px', background: 'var(--bg)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border)' }}>
           {([['bulk', '⚡ Bulk CSV'], ['manual', '✦ Lead Manual']] as [Tab, string][]).map(([t, label]) => (
-            <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? 'var(--accent)' : 'transparent', color: tab === t ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '6px', padding: '6px 16px', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', transition: 'all 0.2s' }}>
+            <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? 'var(--accent)' : 'transparent', color: tab === t ? '#000' : 'var(--text-muted)', border: 'none', borderRadius: '6px', padding: '8px 20px', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.2s' }}>
               {label}
             </button>
           ))}
@@ -187,14 +187,14 @@ export default function Home() {
                         <button
                           onClick={handleSendEmails}
                           disabled={sending}
-                          style={{ background: 'transparent', border: '1px solid var(--green)', borderRadius: '8px', padding: '9px 18px', color: 'var(--green)', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.85rem', cursor: sending ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                          style={{ background: 'transparent', border: '1px solid var(--green)', borderRadius: '8px', padding: '12px 22px', color: 'var(--green)', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.9rem', cursor: sending ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                         >
                           {sending ? <><span className="spinner" /> Enviando...</> : `✉ Disparar E-mails (${leadsComEmail})`}
                         </button>
                       )}
                       <button
                         onClick={() => exportLeadsToCSV(leads, originalRows)}
-                        style={{ background: 'var(--accent)', color: '#000', border: 'none', borderRadius: '8px', padding: '9px 18px', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+                        style={{ background: 'var(--accent)', color: '#000', border: 'none', borderRadius: '8px', padding: '12px 22px', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer' }}
                       >
                         ↓ Exportar CSV
                       </button>
@@ -204,6 +204,7 @@ export default function Home() {
 
                 <LeadsTable
                   leads={leads}
+                  charLimit={config.limite_caracteres}
                   onRegenerate={handleRegenerate}
                   onAvaliar={(id, av) => setLeads(prev => prev.map(l => l.id === id ? { ...l, avaliacao: av } : l))}
                   onEditMensagem={(id, msg) => setLeads(prev => prev.map(l => l.id === id ? { ...l, mensagem_gerada: msg } : l))}

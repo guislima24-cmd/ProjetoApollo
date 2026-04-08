@@ -32,11 +32,11 @@ export default function CampaignConfigPanel({ config, onChange }: Props) {
                   background: config.metodologia === m ? 'var(--accent)' : 'var(--bg)',
                   color: config.metodologia === m ? '#000' : 'var(--text-secondary)',
                   border: `1px solid ${config.metodologia === m ? 'var(--accent)' : 'var(--border)'}`,
-                  fontSize: '0.8rem',
+                  fontSize: '0.9rem',
                   fontFamily: 'Syne, sans-serif',
                   fontWeight: 700,
                 }}
-                className="flex-1 py-2 px-3 rounded-lg transition-all duration-200 cursor-pointer"
+                className="flex-1 py-3 px-4 rounded-lg transition-all duration-200 cursor-pointer"
               >
                 {m === 'CLASSICA' ? 'Clássica' : 'AIDA'}
               </button>
@@ -58,11 +58,11 @@ export default function CampaignConfigPanel({ config, onChange }: Props) {
                   background: config.tom === t ? 'var(--accent)' : 'var(--bg)',
                   color: config.tom === t ? '#000' : 'var(--text-secondary)',
                   border: `1px solid ${config.tom === t ? 'var(--accent)' : 'var(--border)'}`,
-                  fontSize: '0.75rem',
+                  fontSize: '0.85rem',
                   fontFamily: 'Syne, sans-serif',
                   fontWeight: 700,
                 }}
-                className="flex-1 py-2 px-2 rounded-lg transition-all duration-200 cursor-pointer"
+                className="flex-1 py-3 px-4 rounded-lg transition-all duration-200 cursor-pointer"
               >
                 {t}
               </button>
@@ -80,18 +80,17 @@ export default function CampaignConfigPanel({ config, onChange }: Props) {
               <button
                 key={c}
                 onClick={() => {
-                  update('canal', c)
-                  update('limite_caracteres', c === 'LinkedIn' ? 300 : 800)
+                  onChange({ ...config, canal: c, limite_caracteres: c === 'LinkedIn' ? 300 : 1500 })
                 }}
                 style={{
                   background: config.canal === c ? 'var(--accent)' : 'var(--bg)',
                   color: config.canal === c ? '#000' : 'var(--text-secondary)',
                   border: `1px solid ${config.canal === c ? 'var(--accent)' : 'var(--border)'}`,
-                  fontSize: '0.8rem',
+                  fontSize: '0.9rem',
                   fontFamily: 'Syne, sans-serif',
                   fontWeight: 700,
                 }}
-                className="flex-1 py-2 px-3 rounded-lg transition-all duration-200 cursor-pointer"
+                className="flex-1 py-3 px-4 rounded-lg transition-all duration-200 cursor-pointer"
               >
                 {c}
               </button>
@@ -107,7 +106,7 @@ export default function CampaignConfigPanel({ config, onChange }: Props) {
           <input
             type="range"
             min={100}
-            max={1000}
+            max={2000}
             step={50}
             value={config.limite_caracteres}
             onChange={e => update('limite_caracteres', Number(e.target.value))}
