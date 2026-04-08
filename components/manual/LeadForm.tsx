@@ -79,7 +79,7 @@ export default function LeadForm() {
     <div className="space-y-6">
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }} className="rounded-xl p-6 space-y-4">
         <h3 style={{ fontFamily: 'Syne, sans-serif', color: 'var(--accent)', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-          Dados do Lead (LinkedIn)
+          Dados do Lead ({config.canal})
         </h3>
 
         <div className="grid grid-cols-2 gap-4">
@@ -111,7 +111,7 @@ export default function LeadForm() {
 
         <div>
           <label style={labelStyle}>
-            Contexto Extra do Perfil LinkedIn
+            Contexto Extra {config.canal === 'LinkedIn' ? 'do Perfil LinkedIn' : 'do Lead'}
             <span style={{ color: 'var(--accent)', marginLeft: '6px' }}>— quanto mais, melhor</span>
           </label>
           <textarea
@@ -134,10 +134,10 @@ export default function LeadForm() {
           color: required ? 'var(--text-muted)' : '#000',
           border: 'none',
           borderRadius: '10px',
-          padding: '14px',
+          padding: '16px',
           fontFamily: 'Syne, sans-serif',
           fontWeight: 700,
-          fontSize: '0.9rem',
+          fontSize: '1rem',
           cursor: required || loading ? 'not-allowed' : 'pointer',
           transition: 'all 0.2s',
           display: 'flex',
@@ -170,9 +170,9 @@ export default function LeadForm() {
                   background: 'var(--bg)',
                   border: '1px solid var(--border)',
                   borderRadius: '6px',
-                  padding: '4px 10px',
+                  padding: '8px 14px',
                   color: 'var(--text-muted)',
-                  fontSize: '0.75rem',
+                  fontSize: '0.85rem',
                   fontFamily: 'Syne, sans-serif',
                   cursor: 'pointer',
                 }}
@@ -183,9 +183,9 @@ export default function LeadForm() {
                   background: copied ? 'var(--green)' : 'var(--accent)',
                   border: 'none',
                   borderRadius: '6px',
-                  padding: '4px 12px',
+                  padding: '8px 16px',
                   color: copied ? '#fff' : '#000',
-                  fontSize: '0.75rem',
+                  fontSize: '0.85rem',
                   fontFamily: 'Syne, sans-serif',
                   fontWeight: 700,
                   cursor: 'pointer',

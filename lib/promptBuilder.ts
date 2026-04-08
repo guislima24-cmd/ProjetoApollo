@@ -50,7 +50,7 @@ Lembre-se: a mensagem deve parecer personalizada para essa pessoa especificament
 }
 
 export function buildManualLeadPrompt(lead: ManualLead, config: CampaignConfig): string {
-  return `Escreva uma mensagem de prospecção para o seguinte lead do LinkedIn.
+  return `Escreva uma mensagem de prospecção para o seguinte lead${config.canal === 'LinkedIn' ? ' do LinkedIn' : ''}.
 Você tem informações ricas sobre o perfil dessa pessoa — use-as para
 criar uma mensagem que pareça escrita por alguém que realmente pesquisou
 o lead, não um template genérico.
@@ -61,7 +61,7 @@ o lead, não um template genérico.
 - Setor: ${lead.setor}
 - Tamanho empresa: ${lead.tamanho || 'Não informado'} funcionários
 - Cidade: ${lead.cidade || 'Não informada'}
-${lead.contexto_extra ? `\nInformações adicionais do perfil LinkedIn:\n${lead.contexto_extra}` : ''}
+${lead.contexto_extra ? `\nInformações adicionais ${config.canal === 'LinkedIn' ? 'do perfil LinkedIn' : 'do lead'}:\n${lead.contexto_extra}` : ''}
 
 Instruções:
 - Comece referenciando algo específico do perfil (conquista, projeto, post, cargo atual, etc.)
