@@ -44,3 +44,26 @@ export interface ColumnMapping {
   linkedin: string
   email: string
 }
+
+// Pipeline Apollo Pro — lead no Google Sheets
+export interface PipelineLead {
+  id: string
+  nome: string
+  cargo?: string
+  empresa: string
+  email?: string
+  linkedin_url?: string
+  fonte?: string               // 'LinkedIn' | 'Gmail' | 'Manual'
+  mensagem_gerada?: string
+  status: PipelineStatus
+  data_envio?: string
+  data_resposta?: string
+  responsavel?: string
+}
+
+export type PipelineStatus =
+  | 'novo'
+  | 'pronto_envio'
+  | 'enviado'
+  | 'respondeu'
+  | 'follow_up'

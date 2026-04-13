@@ -1,4 +1,4 @@
-import { CampaignConfig, Lead, ManualLead } from '@/types'
+import { CampaignConfig, Lead, ManualLead, PipelineLead } from '@/types'
 
 export function buildSystemPrompt(config: CampaignConfig): string {
   const metodologiaInstrucoes =
@@ -71,6 +71,42 @@ Instruções:
 - Metodologia: ${config.metodologia}
 
 Esta é uma mensagem de alto valor — o lead foi escolhido estrategicamente. A mensagem deve refletir isso.`
+}
+
+/** Prompt para geração automática no pipeline (via Google Sheets) */
+export function buildPipelineSystemPrompt(): string {
+  return `Você é um especialista em prospecção B2B para empresas juniores universitárias.
+Sua função é escrever mensagens de prospecção personalizadas, diretas e humanas
+para o time comercial da UFABC Júnior.
+
+Regras obrigatórias:
+- NUNCA mencione serviços específicos (Mapeamento de Processos, Pesquisa de Mercado, etc.)
+- O único objetivo da mensagem é conseguir uma reunião diagnóstica
+- NUNCA use frases genéricas como "Espero que esteja bem" ou "Me chamo X e trabalho em Y"
+- SEMPRE comece com algo específico sobre a empresa ou o setor do lead
+- A mensagem deve parecer escrita por um humano que pesquisou o lead
+- Máximo de 600 caracteres
+- Tom: Semiformal
+- Metodologia AIDA:
+  1. ATENÇÃO: capture com uma dor ou pergunta provocadora sobre o setor/empresa do lead
+  2. INTERESSE: gere curiosidade apresentando a UFABC Júnior como solução
+  3. DESEJO: mostre valor e exclusividade para criar vontade de conversar
+  4. AÇÃO: CTA direto convidando para reunião diagnóstica
+
+Formato de resposta: apenas o texto da mensagem, sem aspas, sem explicações adicionais.`
+}
+
+export function buildPipelineLeadPrompt(lead: PipelineLead): string {
+  const canal = lead.linkedin_url ? 'LinkedIn' : 'Email'
+  return `Escreva uma mensagem de prospecção ${canal === 'LinkedIn' ? 'para LinkedIn' : 'por e-mail'} para o seguinte lead:
+
+- Nome: ${lead.nome}
+- Cargo: ${lead.cargo || 'Não informado'}
+- Empresa: ${lead.empresa}
+- Fonte: ${lead.fonte || 'Não informada'}
+${lead.linkedin_url ? `- LinkedIn: ${lead.linkedin_url}` : ''}
+
+Lembre-se: a mensagem deve parecer personalizada para essa pessoa especificamente, não um template genérico.`
 }
 
 export function buildRegeneratePrompt(lead: Lead, mensagemAnterior: string): string {
