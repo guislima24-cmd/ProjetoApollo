@@ -137,7 +137,7 @@ export default function ApolloPitchDeck() {
         background: '#080A0F',
         minHeight: '100vh',
         color: '#E8EAF0',
-        fontFamily: "var(--font-ibm-plex-mono), 'IBM Plex Mono', 'Courier New', monospace",
+        fontFamily: "'IBM Plex Mono', 'Courier New', monospace",
         padding: '0',
         overflowX: 'hidden',
       }}
