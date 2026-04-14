@@ -67,3 +67,14 @@ export type PipelineStatus =
   | 'enviado'
   | 'respondeu'
   | 'follow_up'
+
+// Lead capturado automaticamente para a aba de um membro
+export interface MemberLead {
+  nome: string
+  empresa: string
+  setor?: string
+  canal?: 'E-mail' | 'LinkedIn'
+  email?: string
+  linkedin_url?: string
+  alvo?: string   // 'Conéctar' | 'RD'
+}

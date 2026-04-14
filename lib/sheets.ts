@@ -1,7 +1,30 @@
 import { google } from 'googleapis'
-import { PipelineLead, PipelineStatus } from '@/types'
+import { PipelineLead, PipelineStatus, MemberLead } from '@/types'
 
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!
+
+// Planilha comercial (abas por membro)
+const MEMBER_SPREADSHEET_ID =
+  process.env.GOOGLE_MEMBER_SHEETS_ID ?? process.env.GOOGLE_SHEETS_ID!
+
+export const MEMBER_TABS = [
+  'Anna', 'Daniel', 'Duda', 'Felipe',
+  'Gui Lima', 'Gui Midolli', 'Gustavo',
+  'Larissa', 'Léo', 'Leticia', 'Tiago',
+]
+
+// Índices das colunas nas abas dos membros (base 0)
+// A=Alvo B=Mês C=Canal D=Setor E=Empresa F=Nome G=Número/Link ... V=Mensagem IA
+const M = {
+  alvo: 0,        // A
+  mes: 1,         // B
+  canal: 2,       // C
+  setor: 3,       // D
+  empresa: 4,     // E
+  nome: 5,        // F
+  link: 6,        // G
+  mensagem_ia: 21 // V
+} as const
 const SHEET_NAME = 'Leads'
 
 // Índices das colunas (base 0): A=0, B=1, ...
@@ -96,6 +119,84 @@ export async function getLeadById(
   }
   return null
 }
+
+// ─── Funções para abas dos membros ───────────────────────────────────────────
+
+/** Adiciona um lead na aba do membro e retorna o número da linha inserida */
+export async function appendLeadToMemberTab(
+  responsavel: string,
+  lead: MemberLead
+): Promise<number> {
+  const sheets = getSheets()
+  const mes = new Date().toLocaleString('pt-BR', { month: 'long' })
+
+  const row = new Array(22).fill('')
+  row[M.alvo] = lead.alvo ?? 'Conéctar'
+  row[M.mes] = mes
+  row[M.canal] = lead.canal ?? (lead.linkedin_url ? 'LinkedIn' : 'E-mail')
+  row[M.setor] = lead.setor ?? ''
+  row[M.empresa] = lead.empresa
+  row[M.nome] = lead.nome
+  row[M.link] = lead.linkedin_url ?? lead.email ?? ''
+
+  const res = await sheets.spreadsheets.values.append({
+    spreadsheetId: MEMBER_SPREADSHEET_ID,
+    range: `'${responsavel}'!A:V`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [row] },
+  })
+
+  // Extrai o número da linha do range retornado (ex: "'Anna'!A5:V5")
+  const updatedRange = res.data.updates?.updatedRange ?? ''
+  const match = updatedRange.match(/(\d+)$/)
+  return match ? parseInt(match[1]) : -1
+}
+
+/** Escreve a mensagem gerada pela IA na coluna V da aba do membro */
+export async function updateMensagemIA(
+  responsavel: string,
+  rowIndex: number,
+  mensagem: string
+): Promise<void> {
+  const sheets = getSheets()
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: MEMBER_SPREADSHEET_ID,
+    range: `'${responsavel}'!V${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[mensagem]] },
+  })
+}
+
+/** Garante que todas as abas de membros têm o cabeçalho "Mensagem IA" na coluna V */
+export async function setupMensagemIAHeaders(): Promise<string[]> {
+  const sheets = getSheets()
+  const updated: string[] = []
+
+  for (const tab of MEMBER_TABS) {
+    try {
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: MEMBER_SPREADSHEET_ID,
+        range: `'${tab}'!V1`,
+      })
+      const current = res.data.values?.[0]?.[0] ?? ''
+      if (current !== 'Mensagem IA') {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: MEMBER_SPREADSHEET_ID,
+          range: `'${tab}'!V1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [['Mensagem IA']] },
+        })
+        updated.push(tab)
+      }
+    } catch {
+      // Aba não encontrada — ignora
+    }
+  }
+
+  return updated
+}
+
+// ─── Funções para aba pipeline (Leads) ───────────────────────────────────────
 
 /** Atualiza um campo específico de um lead pelo número da linha */
 export async function updateLeadField(
