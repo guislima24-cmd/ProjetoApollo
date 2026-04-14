@@ -45,11 +45,24 @@ const COL = {
 
 type ColKey = keyof typeof COL
 
+function normalizePrivateKey(key: string | undefined): string | undefined {
+  if (!key) return key
+  let k = key.trim()
+  // Remove aspas envolventes se o valor foi colado no Vercel com aspas
+  if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
+    k = k.slice(1, -1)
+  }
+  // Converte \n literais em quebras de linha reais. Se a chave já vier com
+  // quebras reais, esse replace simplesmente não faz nada.
+  k = k.replace(/\\n/g, '\n')
+  return k
+}
+
 function getSheets() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      private_key: normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY),
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   })
