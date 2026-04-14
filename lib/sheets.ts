@@ -45,7 +45,7 @@ const COL = {
 
 type ColKey = keyof typeof COL
 
-function normalizePrivateKey(key: string | undefined): string | undefined {
+export function normalizePrivateKey(key: string | undefined): string | undefined {
   if (!key) return key
   let k = key.trim()
   // Remove aspas envolventes se o valor foi colado no Vercel com aspas
@@ -55,15 +55,55 @@ function normalizePrivateKey(key: string | undefined): string | undefined {
   // Converte \n literais em quebras de linha reais. Se a chave já vier com
   // quebras reais, esse replace simplesmente não faz nada.
   k = k.replace(/\\n/g, '\n')
+  // Normaliza aspas tipográficas que podem aparecer quando a chave é colada
+  // a partir de um editor que auto-corrige (raro, mas possível)
+  k = k.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'")
   return k
+}
+
+/**
+ * Resolve as credenciais do service account. Prioridade:
+ *   1. GOOGLE_CREDENTIALS_JSON (JSON inteiro — formato mais robusto)
+ *   2. GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY (par de envs)
+ */
+export function getCredentials(): { client_email: string; private_key: string } {
+  const rawJson = process.env.GOOGLE_CREDENTIALS_JSON
+  if (rawJson) {
+    const trimmed = rawJson.trim()
+    let parsed: { client_email?: string; private_key?: string }
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch (e) {
+      throw new Error(
+        `GOOGLE_CREDENTIALS_JSON não é um JSON válido: ${(e as Error).message}`
+      )
+    }
+    if (!parsed.client_email || !parsed.private_key) {
+      throw new Error(
+        'GOOGLE_CREDENTIALS_JSON precisa conter os campos client_email e private_key'
+      )
+    }
+    return { client_email: parsed.client_email, private_key: parsed.private_key }
+  }
+
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
+  const key = normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY)
+  if (!email || !key) {
+    throw new Error(
+      'Credenciais do Google ausentes. Configure GOOGLE_CREDENTIALS_JSON ou o par GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY'
+    )
+  }
+  if (!key.includes('BEGIN') || !key.includes('PRIVATE KEY')) {
+    throw new Error(
+      'GOOGLE_PRIVATE_KEY não parece ser uma PEM válida (falta -----BEGIN PRIVATE KEY-----)'
+    )
+  }
+  return { client_email: email, private_key: key }
 }
 
 function getSheets() {
   const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY),
-    },
+    credentials: getCredentials(),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   })
   return google.sheets({ version: 'v4', auth })
