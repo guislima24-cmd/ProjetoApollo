@@ -31,6 +31,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'ANTHROPIC_API_KEY não configurada' }, { status: 500 })
     }
 
+    const missingSheetsEnv: string[] = []
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) missingSheetsEnv.push('GOOGLE_SERVICE_ACCOUNT_EMAIL')
+    if (!process.env.GOOGLE_PRIVATE_KEY) missingSheetsEnv.push('GOOGLE_PRIVATE_KEY')
+    if (!process.env.GOOGLE_SHEETS_ID && !process.env.GOOGLE_MEMBER_SHEETS_ID) {
+      missingSheetsEnv.push('GOOGLE_SHEETS_ID ou GOOGLE_MEMBER_SHEETS_ID')
+    }
+    if (missingSheetsEnv.length > 0) {
+      return NextResponse.json(
+        { error: `Variáveis de ambiente ausentes: ${missingSheetsEnv.join(', ')}` },
+        { status: 500 }
+      )
+    }
+
     const lead: MemberLead = { nome, empresa, setor, canal, email, linkedin_url, alvo }
 
     // 1. Insere linha na aba do membro
@@ -82,6 +95,11 @@ A mensagem deve parecer escrita por um humano que pesquisou esse lead especifica
     return NextResponse.json({ mensagem, responsavel, rowIndex })
   } catch (error) {
     console.error('Erro ao processar lead de membro:', error)
-    return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
+    const message = error instanceof Error ? error.message : String(error)
+    // Erros comuns da API Google Sheets trazem um código + texto útil em `message`
+    return NextResponse.json(
+      { error: 'Erro interno do servidor', detalhe: message },
+      { status: 500 }
+    )
   }
 }
