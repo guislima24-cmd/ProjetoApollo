@@ -58,6 +58,12 @@ export function normalizePrivateKey(key: string | undefined): string | undefined
   // Normaliza aspas tipográficas que podem aparecer quando a chave é colada
   // a partir de um editor que auto-corrige (raro, mas possível)
   k = k.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'")
+  // Último recurso: se o valor foi colado com lixo em volta (ex: aspas + vírgula
+  // do campo JSON inteiro: `"...",`), extrai só o bloco PEM.
+  const pemMatch = k.match(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----/)
+  if (pemMatch) {
+    k = pemMatch[0] + '\n'
+  }
   return k
 }
 
