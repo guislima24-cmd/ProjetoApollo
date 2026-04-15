@@ -26,6 +26,7 @@ interface AnthropicToolUseBlock {
   type: 'tool_use'
   name: string
   input: Record<string, unknown>
+  [key: string]: unknown
 }
 
 interface AnthropicContentBlock {

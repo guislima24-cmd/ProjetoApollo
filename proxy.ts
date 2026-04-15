@@ -2,15 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getMemberFromRequest } from './lib/auth'
 
 /**
- * Middleware de proteção da área autenticada.
+ * Proxy de proteção da área autenticada (era middleware.ts no Next.js <16).
  *
  * - Rotas de página (`/prospectar/*`): redireciona para `/login` se não logado.
  * - Rotas API (`/api/member-leads/*`, `/api/auth/me`): retorna 401 JSON.
  * - Whitelist explícita: `/api/auth/login`, `/api/auth/logout`,
  *   `/api/member-leads/debug` (útil enquanto o setup do Sheets não estiver 100%).
- *
- * Roda em Edge runtime — não pode importar `googleapis`. Por isso `MEMBER_TABS`
- * mora em `lib/members.ts` e não em `lib/sheets.ts`.
  */
 
 export const config = {
@@ -27,7 +24,7 @@ const API_WHITELIST = new Set<string>([
   '/api/member-leads/debug',
 ])
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   if (API_WHITELIST.has(pathname)) return NextResponse.next()
