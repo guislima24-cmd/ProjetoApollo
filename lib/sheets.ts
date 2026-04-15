@@ -1,17 +1,15 @@
 import { google } from 'googleapis'
 import { PipelineLead, PipelineStatus, MemberLead } from '@/types'
+import { MEMBER_TABS } from './members'
+
+// Reexport para manter compatibilidade com imports existentes
+export { MEMBER_TABS }
 
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!
 
 // Planilha comercial (abas por membro)
 const MEMBER_SPREADSHEET_ID =
   process.env.GOOGLE_MEMBER_SHEETS_ID ?? process.env.GOOGLE_SHEETS_ID!
-
-export const MEMBER_TABS = [
-  'Anna', 'Daniel', 'Duda', 'Felipe',
-  'Gui Lima', 'Gui Midolli', 'Gustavo',
-  'Larissa', 'Léo', 'Leticia', 'Tiago',
-]
 
 // Índices das colunas nas abas dos membros (base 0)
 // A=Alvo B=Mês C=Canal D=Setor E=Empresa F=Nome G=Número/Link ... V=Mensagem IA
@@ -181,6 +179,15 @@ export async function getLeadById(
 
 // ─── Funções para abas dos membros ───────────────────────────────────────────
 
+/**
+ * Prefixa com `'` campos que comecem com `=`, `+`, `-` ou `@` — defesa contra
+ * injeção de fórmulas no Google Sheets.
+ */
+function sanitizeCell(value: string): string {
+  if (value && /^[=+\-@]/.test(value)) return `'${value}`
+  return value
+}
+
 /** Adiciona um lead na aba do membro e retorna o número da linha inserida */
 export async function appendLeadToMemberTab(
   responsavel: string,
@@ -190,18 +197,18 @@ export async function appendLeadToMemberTab(
   const mes = new Date().toLocaleString('pt-BR', { month: 'long' })
 
   const row = new Array(22).fill('')
-  row[M.alvo] = lead.alvo ?? 'Conéctar'
+  row[M.alvo] = sanitizeCell(lead.alvo ?? 'Conéctar')
   row[M.mes] = mes
-  row[M.canal] = lead.canal ?? (lead.linkedin_url ? 'LinkedIn' : 'E-mail')
-  row[M.setor] = lead.setor ?? ''
-  row[M.empresa] = lead.empresa
-  row[M.nome] = lead.nome
-  row[M.link] = lead.linkedin_url ?? lead.email ?? ''
+  row[M.canal] = sanitizeCell(lead.canal ?? (lead.linkedin_url ? 'LinkedIn' : 'E-mail'))
+  row[M.setor] = sanitizeCell(lead.setor ?? '')
+  row[M.empresa] = sanitizeCell(lead.empresa)
+  row[M.nome] = sanitizeCell(lead.nome)
+  row[M.link] = sanitizeCell(lead.linkedin_url ?? lead.email ?? '')
 
   const res = await sheets.spreadsheets.values.append({
     spreadsheetId: MEMBER_SPREADSHEET_ID,
     range: `'${responsavel}'!A:V`,
-    valueInputOption: 'USER_ENTERED',
+    valueInputOption: 'RAW',
     requestBody: { values: [row] },
   })
 
@@ -224,6 +231,51 @@ export async function updateMensagemIA(
     valueInputOption: 'RAW',
     requestBody: { values: [[mensagem]] },
   })
+}
+
+export interface RecentMemberLead {
+  rowIndex: number
+  alvo: string
+  mes: string
+  canal: string
+  setor: string
+  empresa: string
+  nome: string
+  link: string
+  mensagemIA: string
+}
+
+/**
+ * Busca os últimos N leads da aba de um membro, mais recente primeiro.
+ * rowIndex é 1-indexed (linha real na planilha, header é 1).
+ */
+export async function getRecentLeadsFromMemberTab(
+  responsavel: string,
+  n = 10
+): Promise<RecentMemberLead[]> {
+  const sheets = getSheets()
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: MEMBER_SPREADSHEET_ID,
+    range: `'${responsavel}'!A2:V`,
+  })
+  const rows = (res.data.values ?? []) as string[][]
+  const start = Math.max(0, rows.length - n)
+  const result: RecentMemberLead[] = []
+  for (let i = rows.length - 1; i >= start; i--) {
+    const row = rows[i]
+    result.push({
+      rowIndex: i + 2, // rows[0] é linha 2 (A2), então rows[i] é linha i+2
+      alvo: row[M.alvo] ?? '',
+      mes: row[M.mes] ?? '',
+      canal: row[M.canal] ?? '',
+      setor: row[M.setor] ?? '',
+      empresa: row[M.empresa] ?? '',
+      nome: row[M.nome] ?? '',
+      link: row[M.link] ?? '',
+      mensagemIA: row[M.mensagem_ia] ?? '',
+    })
+  }
+  return result
 }
 
 /** Garante que todas as abas de membros têm o cabeçalho "Mensagem IA" na coluna V */

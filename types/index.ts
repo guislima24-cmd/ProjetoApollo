@@ -78,3 +78,24 @@ export interface MemberLead {
   linkedin_url?: string
   alvo?: string   // 'Conéctar' | 'RD'
 }
+
+// ─── Auth / Prospecção ───────────────────────────────────────────────────────
+
+export type ConfiancaNivel = 'alta' | 'media' | 'baixa'
+
+export interface SessionPayload {
+  responsavel: string
+}
+
+export interface ExtractionResult {
+  nome: string | null
+  cargo: string | null
+  empresa: string | null
+  setor: string | null
+  alvo: 'Conéctar' | 'RD'
+  confianca: {
+    nome: ConfiancaNivel
+    empresa: ConfiancaNivel
+    setor: ConfiancaNivel
+  }
+}

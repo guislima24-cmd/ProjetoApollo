@@ -1,21 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { appendLeadToMemberTab, updateMensagemIA } from '@/lib/sheets'
 import { getMemberFromRequest } from '@/lib/auth'
+import { updateMensagemIA } from '@/lib/sheets'
 import { buildPipelineSystemPrompt } from '@/lib/promptBuilder'
-import { MemberLead } from '@/types'
 
 /**
- * POST /api/member-leads
+ * POST /api/member-leads/regenerate
+ * Body: { rowIndex: number, nome: string, empresa: string, setor?: string,
+ *         canal?: 'E-mail' | 'LinkedIn', email?: string, linkedin_url?: string,
+ *         mensagemAnterior?: string }
  *
- * Protegido pelo middleware — só chega aqui com cookie JWT válido. O campo
- * `responsavel` vem SEMPRE do cookie (nunca do body): impede que um membro
- * grave na aba de outro forjando o payload.
- *
- * Fluxo:
- *   1. Insere linha na aba do membro (colunas A-G) via `appendLeadToMemberTab`.
- *   2. Gera pitch personalizado via Claude.
- *   3. Escreve o pitch na coluna V da linha inserida.
+ * Gera uma nova mensagem com ângulo diferente da anterior e reescreve a
+ * coluna V da linha indicada na aba do membro logado.
  */
+
+interface RegenerateBody {
+  rowIndex?: number
+  nome?: string
+  empresa?: string
+  setor?: string
+  canal?: 'E-mail' | 'LinkedIn'
+  email?: string
+  linkedin_url?: string
+  mensagemAnterior?: string
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,13 +31,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
     }
 
-    const body = (await req.json().catch(() => null)) as MemberLead | null
+    const body = (await req.json().catch(() => null)) as RegenerateBody | null
     if (!body) {
       return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
     }
 
-    const { nome, empresa, setor, canal, email, linkedin_url, alvo } = body
+    const { rowIndex, nome, empresa, setor, canal, email, linkedin_url, mensagemAnterior } = body
 
+    if (!rowIndex || !Number.isInteger(rowIndex) || rowIndex < 2) {
+      return NextResponse.json({ error: 'rowIndex inválido' }, { status: 400 })
+    }
     if (!nome || !empresa) {
       return NextResponse.json(
         { error: 'Campos obrigatórios: nome, empresa' },
@@ -43,28 +53,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'ANTHROPIC_API_KEY não configurada' }, { status: 500 })
     }
 
-    const missingSheetsEnv: string[] = []
-    const hasJsonCred = Boolean(process.env.GOOGLE_CREDENTIALS_JSON)
-    if (!hasJsonCred) {
-      if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) missingSheetsEnv.push('GOOGLE_SERVICE_ACCOUNT_EMAIL')
-      if (!process.env.GOOGLE_PRIVATE_KEY) missingSheetsEnv.push('GOOGLE_PRIVATE_KEY')
-    }
-    if (!process.env.GOOGLE_SHEETS_ID && !process.env.GOOGLE_MEMBER_SHEETS_ID) {
-      missingSheetsEnv.push('GOOGLE_SHEETS_ID ou GOOGLE_MEMBER_SHEETS_ID')
-    }
-    if (missingSheetsEnv.length > 0) {
-      return NextResponse.json(
-        { error: `Variáveis de ambiente ausentes: ${missingSheetsEnv.join(', ')}` },
-        { status: 500 }
-      )
-    }
-
-    const lead: MemberLead = { nome, empresa, setor, canal, email, linkedin_url, alvo }
-
-    // 1. Insere linha na aba do membro
-    const rowIndex = await appendLeadToMemberTab(responsavel, lead)
-
-    // 2. Gera mensagem com Claude
     const canalStr = canal ?? (linkedin_url ? 'LinkedIn' : 'E-mail')
     const userPrompt = `Escreva uma mensagem de prospecção ${canalStr === 'LinkedIn' ? 'para LinkedIn' : 'por e-mail'} para:
 
@@ -73,6 +61,7 @@ export async function POST(req: NextRequest) {
 - Setor: ${setor ?? 'Não informado'}
 ${linkedin_url ? `- LinkedIn: ${linkedin_url}` : ''}
 ${email ? `- E-mail: ${email}` : ''}
+${mensagemAnterior ? `\nVersão anterior (NÃO repita esta abordagem, use um ângulo completamente diferente):\n${mensagemAnterior}` : ''}
 
 A mensagem deve parecer escrita por um humano que pesquisou esse lead especificamente.`
 
@@ -102,17 +91,13 @@ A mensagem deve parecer escrita por um humano que pesquisou esse lead especifica
     const claudeData = await response.json()
     const mensagem: string = claudeData.content[0]?.text ?? ''
 
-    // 3. Salva mensagem na coluna V da linha inserida
-    if (rowIndex > 0) {
-      await updateMensagemIA(responsavel, rowIndex, mensagem)
-    }
-
-    return NextResponse.json({ mensagem, responsavel, rowIndex })
+    await updateMensagemIA(responsavel, rowIndex, mensagem)
+    return NextResponse.json({ mensagem, rowIndex })
   } catch (error) {
-    console.error('Erro ao processar lead de membro:', error)
+    console.error('Erro em /api/member-leads/regenerate:', error)
     const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json(
-      { error: 'Erro interno do servidor', detalhe: message },
+      { error: 'Erro interno', detalhe: message },
       { status: 500 }
     )
   }
