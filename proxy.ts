@@ -21,6 +21,7 @@ export const config = {
 const API_WHITELIST = new Set<string>([
   '/api/auth/login',
   '/api/auth/logout',
+  '/api/auth/hash-password',
   '/api/member-leads/debug',
 ])
 
