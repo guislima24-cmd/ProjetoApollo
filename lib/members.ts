@@ -3,6 +3,12 @@
  *
  * Separado de `lib/sheets.ts` porque o middleware do Next.js roda em Edge
  * runtime e não pode importar `googleapis` (Node-only).
+ *
+ * ⚠️ IMPORTANTE: cada string em `MEMBER_TABS` tem que ser EXATAMENTE igual
+ * ao nome da aba na planilha comercial (case-sensitive, com acento, com
+ * espaço). Se não bater, o `append` do Google Sheets retorna 400 e nenhuma
+ * linha é criada. Para ver o diff entre configurado e real, abra:
+ *     GET /api/member-leads/debug   →  campo `member_tabs.missing_in_sheet`
  */
 
 export const MEMBER_TABS = [
