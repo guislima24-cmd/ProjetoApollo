@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { appendLeadToMemberTab, updateMensagemIA } from '@/lib/sheets'
+import { appendLeadToMemberTab, MemberTabNotFoundError, updateMensagemIA } from '@/lib/sheets'
 import { getMemberFromRequest } from '@/lib/auth'
 import { buildPipelineSystemPrompt } from '@/lib/promptBuilder'
 import { MemberLead } from '@/types'
@@ -62,7 +62,25 @@ export async function POST(req: NextRequest) {
     const lead: MemberLead = { nome, empresa, setor, canal, email, linkedin_url, alvo }
 
     // 1. Insere linha na aba do membro
-    const rowIndex = await appendLeadToMemberTab(responsavel, lead)
+    let rowIndex: number
+    try {
+      rowIndex = await appendLeadToMemberTab(responsavel, lead)
+    } catch (e) {
+      if (e instanceof MemberTabNotFoundError) {
+        // Mismatch entre nome configurado em lib/members.ts e aba real na planilha.
+        // 400 (não 500) porque é erro de configuração, não falha transitória.
+        return NextResponse.json(
+          {
+            error: e.message,
+            responsavel: e.responsavel,
+            abasDisponiveis: e.availableTabs,
+            dica: 'Atualize MEMBER_TABS em lib/members.ts para bater com os nomes reais das abas. Use GET /api/member-leads/debug para ver o diff.',
+          },
+          { status: 400 }
+        )
+      }
+      throw e
+    }
 
     // 2. Gera mensagem com Claude
     const canalStr = canal ?? (linkedin_url ? 'LinkedIn' : 'E-mail')

@@ -188,12 +188,54 @@ function sanitizeCell(value: string): string {
   return value
 }
 
+/**
+ * Erro lançado quando a aba do membro logado não existe na planilha comercial.
+ * A rota traduz isso em 400 com mensagem clara + lista das abas disponíveis.
+ */
+export class MemberTabNotFoundError extends Error {
+  readonly responsavel: string
+  readonly availableTabs: string[]
+  constructor(responsavel: string, availableTabs: string[]) {
+    super(
+      `Aba "${responsavel}" não existe na planilha comercial. ` +
+        `Abas disponíveis: ${availableTabs.join(', ') || '(nenhuma)'}.`
+    )
+    this.name = 'MemberTabNotFoundError'
+    this.responsavel = responsavel
+    this.availableTabs = availableTabs
+  }
+}
+
+/** Lê os nomes reais das abas (sheets) da planilha comercial. */
+export async function listActualMemberTabs(): Promise<string[]> {
+  const sheets = getSheets()
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId: MEMBER_SPREADSHEET_ID,
+    fields: 'sheets.properties.title',
+  })
+  return (meta.data.sheets ?? [])
+    .map((s) => s.properties?.title ?? '')
+    .filter(Boolean)
+}
+
+/** Escapa aspas simples no nome da aba para uso seguro em A1 notation. */
+function quoteSheetName(name: string): string {
+  return `'${name.replace(/'/g, "''")}'`
+}
+
 /** Adiciona um lead na aba do membro e retorna o número da linha inserida */
 export async function appendLeadToMemberTab(
   responsavel: string,
   lead: MemberLead
 ): Promise<number> {
   const sheets = getSheets()
+
+  // Valida que a aba existe ANTES de escrever — erro claro em vez de 400 genérico do Google.
+  const availableTabs = await listActualMemberTabs()
+  if (!availableTabs.includes(responsavel)) {
+    throw new MemberTabNotFoundError(responsavel, availableTabs)
+  }
+
   const mes = new Date().toLocaleString('pt-BR', { month: 'long' })
 
   const row = new Array(22).fill('')
@@ -207,8 +249,11 @@ export async function appendLeadToMemberTab(
 
   const res = await sheets.spreadsheets.values.append({
     spreadsheetId: MEMBER_SPREADSHEET_ID,
-    range: `'${responsavel}'!A:V`,
+    range: `${quoteSheetName(responsavel)}!A:V`,
     valueInputOption: 'RAW',
+    // INSERT_ROWS garante uma linha nova de verdade — OVERWRITE (padrão) pode
+    // sobrescrever células pré-existentes se a planilha tiver fórmulas à direita.
+    insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [row] },
   })
 
@@ -227,7 +272,7 @@ export async function updateMensagemIA(
   const sheets = getSheets()
   await sheets.spreadsheets.values.update({
     spreadsheetId: MEMBER_SPREADSHEET_ID,
-    range: `'${responsavel}'!V${rowIndex}`,
+    range: `${quoteSheetName(responsavel)}!V${rowIndex}`,
     valueInputOption: 'RAW',
     requestBody: { values: [[mensagem]] },
   })
@@ -256,7 +301,7 @@ export async function getRecentLeadsFromMemberTab(
   const sheets = getSheets()
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: MEMBER_SPREADSHEET_ID,
-    range: `'${responsavel}'!A2:V`,
+    range: `${quoteSheetName(responsavel)}!A2:V`,
   })
   const rows = (res.data.values ?? []) as string[][]
   const start = Math.max(0, rows.length - n)
@@ -287,13 +332,13 @@ export async function setupMensagemIAHeaders(): Promise<string[]> {
     try {
       const res = await sheets.spreadsheets.values.get({
         spreadsheetId: MEMBER_SPREADSHEET_ID,
-        range: `'${tab}'!V1`,
+        range: `${quoteSheetName(tab)}!V1`,
       })
       const current = res.data.values?.[0]?.[0] ?? ''
       if (current !== 'Mensagem IA') {
         await sheets.spreadsheets.values.update({
           spreadsheetId: MEMBER_SPREADSHEET_ID,
-          range: `'${tab}'!V1`,
+          range: `${quoteSheetName(tab)}!V1`,
           valueInputOption: 'RAW',
           requestBody: { values: [['Mensagem IA']] },
         })

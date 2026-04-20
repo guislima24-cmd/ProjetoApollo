@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { normalizePrivateKey } from '@/lib/sheets'
+import { listActualMemberTabs, normalizePrivateKey } from '@/lib/sheets'
+import { MEMBER_TABS } from '@/lib/members'
 
 /**
  * GET /api/member-leads/debug
@@ -62,6 +63,24 @@ export async function GET() {
       normalized_has_end_marker: normalized.includes('-----END PRIVATE KEY-----'),
       normalized_line_count: normalized.split('\n').length,
     }
+  }
+
+  // Comparação abas configuradas (código) × abas reais (planilha).
+  // É o atalho pra diagnosticar "não escreveu na aba certa" / "planilha não preencheu".
+  try {
+    const actual = await listActualMemberTabs()
+    const configured = [...MEMBER_TABS]
+    const missingInSheet = configured.filter((t) => !actual.includes(t))
+    const extraInSheet = actual.filter((t) => !configured.includes(t as (typeof MEMBER_TABS)[number]))
+    result.member_tabs = {
+      configured,
+      actual,
+      missing_in_sheet: missingInSheet, // definidas em members.ts mas NÃO existem na planilha → causam 400 no append
+      extra_in_sheet: extraInSheet,     // existem na planilha mas não mapeadas no código
+      in_sync: missingInSheet.length === 0,
+    }
+  } catch (e) {
+    result.member_tabs = { error: (e as Error).message }
   }
 
   return NextResponse.json(result)
