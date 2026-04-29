@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import SessionHeader from '@/components/SessionHeader'
+import Providers from '@/components/Providers'
 
 export const metadata: Metadata = {
   title: 'ProspectAI — UFABC Júnior',
@@ -11,8 +12,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR">
       <body>
-        <SessionHeader />
-        {children}
+        <Providers>
+          <SessionHeader />
+          {children}
+        </Providers>
       </body>
     </html>
   )

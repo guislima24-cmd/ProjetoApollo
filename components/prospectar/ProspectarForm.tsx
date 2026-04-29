@@ -82,7 +82,7 @@ export default function ProspectarForm({ responsavel }: Props) {
     }
     setCarregando(true)
     try {
-      const res = await fetch('/api/member-leads/analyze', {
+      const res = await fetch('/api/prospection/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, linkedin_url: linkedinUrl, contexto }),
@@ -127,10 +127,16 @@ export default function ProspectarForm({ responsavel }: Props) {
         linkedin_url: linkedinUrl.trim() || undefined,
         alvo: campos.alvo,
       }
-      const res = await fetch('/api/member-leads', {
+      const res = await fetch('/api/prospection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(lead),
+        body: JSON.stringify({
+          nome: lead.nome,
+          empresa: lead.empresa,
+          setor: lead.setor,
+          canal: lead.canal === 'LinkedIn' ? 'LinkedIn' : 'Email',
+          contato: lead.linkedin_url ?? lead.email ?? '',
+        }),
       })
       const data = await res.json()
       if (!res.ok) {

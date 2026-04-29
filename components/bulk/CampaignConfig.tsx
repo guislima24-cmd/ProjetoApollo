@@ -6,114 +6,127 @@ interface Props {
   onChange: (config: CampaignConfig) => void
 }
 
+function Pills<T extends string>({
+  label, options, value, onChange,
+}: { label: string; options: { value: T; label: string; sub?: string }[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontFamily: 'Syne, sans-serif', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', marginBottom: 8 }}>
+        {label}
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {options.map(o => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            style={{
+              padding:      '6px 14px',
+              borderRadius: 100,
+              border:       `1px solid ${value === o.value ? 'var(--green-primary)' : 'var(--border)'}`,
+              background:   value === o.value ? 'rgba(49,112,57,0.18)' : 'transparent',
+              color:        value === o.value ? 'var(--cream)' : 'var(--text-muted)',
+              fontSize:     12,
+              fontFamily:   'Syne, sans-serif',
+              fontWeight:   700,
+              cursor:       'pointer',
+              transition:   'all 0.15s',
+              display:      'flex',
+              alignItems:   'center',
+              gap:          5,
+            }}
+          >
+            {o.label}
+            {o.sub && <span style={{ fontSize: 10, opacity: 0.7 }}>{o.sub}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function CampaignConfigPanel({ config, onChange }: Props) {
-  const update = (key: keyof CampaignConfig, value: string | number) => {
+  const update = (key: keyof CampaignConfig, value: string | number) =>
     onChange({ ...config, [key]: value })
-  }
 
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }} className="rounded-xl p-6 space-y-5">
-      <h3 style={{ fontFamily: 'Syne, sans-serif', color: 'var(--accent)' }} className="text-sm font-700 uppercase tracking-widest">
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontSize: 11, fontFamily: 'Syne, sans-serif', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--green-primary)' }}>
         Configuração da Campanha
-      </h3>
+      </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        {/* Metodologia */}
-        <div className="space-y-2">
-          <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }} className="block uppercase tracking-wider font-500">
-            Metodologia
-          </label>
-          <div className="flex gap-2">
-            {(['CLASSICA', 'AIDA'] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => update('metodologia', m)}
-                style={{
-                  background: config.metodologia === m ? 'var(--accent)' : 'var(--bg)',
-                  color: config.metodologia === m ? '#000' : 'var(--text-secondary)',
-                  border: `1px solid ${config.metodologia === m ? 'var(--accent)' : 'var(--border)'}`,
-                  fontSize: '0.9rem',
-                  fontFamily: 'Syne, sans-serif',
-                  fontWeight: 700,
-                }}
-                className="flex-1 py-3 px-4 rounded-lg transition-all duration-200 cursor-pointer"
-              >
-                {m === 'CLASSICA' ? 'Clássica' : 'AIDA'}
-              </button>
-            ))}
-          </div>
+      {/* Seletor de IA — destaque */}
+      <div style={{ background: '#0a0a0a', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
+        <div style={{ fontSize: 11, fontFamily: 'Syne, sans-serif', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', marginBottom: 10 }}>
+          Modelo de IA
         </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {([
+            { value: 'gemini', label: 'Gemini Flash', sub: 'Grátis', icon: '◈' },
+            { value: 'claude', label: 'Claude Haiku', sub: '~$0,001/msg', icon: '◆' },
+          ] as const).map(o => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => update('ia', o.value)}
+              style={{
+                flex:         1,
+                padding:      '10px 14px',
+                borderRadius: 8,
+                border:       `1px solid ${config.ia === o.value ? (o.value === 'gemini' ? '#4285f4' : 'var(--gold)') : 'var(--border)'}`,
+                background:   config.ia === o.value ? (o.value === 'gemini' ? 'rgba(66,133,244,0.1)' : 'rgba(241,190,73,0.08)') : 'transparent',
+                color:        config.ia === o.value ? (o.value === 'gemini' ? '#7ab3f7' : 'var(--gold)') : 'var(--text-muted)',
+                fontSize:     13,
+                fontFamily:   'Syne, sans-serif',
+                fontWeight:   700,
+                cursor:       'pointer',
+                transition:   'all 0.15s',
+                textAlign:    'left',
+                display:      'flex',
+                alignItems:   'center',
+                gap:          8,
+              }}
+            >
+              <span style={{ fontSize: 16 }}>{o.icon}</span>
+              <span>
+                {o.label}
+                <span style={{ display: 'block', fontSize: 10, fontWeight: 400, opacity: 0.7, marginTop: 1 }}>{o.sub}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
 
-        {/* Tom */}
-        <div className="space-y-2">
-          <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }} className="block uppercase tracking-wider font-500">
-            Tom
-          </label>
-          <div className="flex gap-2">
-            {(['Formal', 'Semiformal', 'Direto'] as const).map(t => (
-              <button
-                key={t}
-                onClick={() => update('tom', t)}
-                style={{
-                  background: config.tom === t ? 'var(--accent)' : 'var(--bg)',
-                  color: config.tom === t ? '#000' : 'var(--text-secondary)',
-                  border: `1px solid ${config.tom === t ? 'var(--accent)' : 'var(--border)'}`,
-                  fontSize: '0.85rem',
-                  fontFamily: 'Syne, sans-serif',
-                  fontWeight: 700,
-                }}
-                className="flex-1 py-3 px-4 rounded-lg transition-all duration-200 cursor-pointer"
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
+      <Pills
+        label="Canal"
+        value={config.canal}
+        options={[{ value: 'LinkedIn', label: 'LinkedIn' }, { value: 'Email', label: 'Email' }]}
+        onChange={c => onChange({ ...config, canal: c, limite_caracteres: c === 'LinkedIn' ? 300 : 1500 })}
+      />
+      <Pills
+        label="Tom"
+        value={config.tom}
+        options={[{ value: 'Formal', label: 'Formal' }, { value: 'Semiformal', label: 'Semiformal' }, { value: 'Direto', label: 'Direto' }]}
+        onChange={t => update('tom', t)}
+      />
+      <Pills
+        label="Metodologia"
+        value={config.metodologia}
+        options={[{ value: 'CLASSICA', label: 'Clássica' }, { value: 'AIDA', label: 'AIDA' }]}
+        onChange={m => update('metodologia', m)}
+      />
 
-        {/* Canal */}
-        <div className="space-y-2">
-          <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }} className="block uppercase tracking-wider font-500">
-            Canal
-          </label>
-          <div className="flex gap-2">
-            {(['LinkedIn', 'Email'] as const).map(c => (
-              <button
-                key={c}
-                onClick={() => {
-                  onChange({ ...config, canal: c, limite_caracteres: c === 'LinkedIn' ? 300 : 1500 })
-                }}
-                style={{
-                  background: config.canal === c ? 'var(--accent)' : 'var(--bg)',
-                  color: config.canal === c ? '#000' : 'var(--text-secondary)',
-                  border: `1px solid ${config.canal === c ? 'var(--accent)' : 'var(--border)'}`,
-                  fontSize: '0.9rem',
-                  fontFamily: 'Syne, sans-serif',
-                  fontWeight: 700,
-                }}
-                className="flex-1 py-3 px-4 rounded-lg transition-all duration-200 cursor-pointer"
-              >
-                {c}
-              </button>
-            ))}
-          </div>
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontSize: 11, fontFamily: 'Syne, sans-serif', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>Limite</span>
+          <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--gold)' }}>{config.limite_caracteres} chars</span>
         </div>
-
-        {/* Limite de caracteres */}
-        <div className="space-y-2">
-          <label style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }} className="block uppercase tracking-wider font-500">
-            Limite de Caracteres: <span style={{ color: 'var(--accent)' }}>{config.limite_caracteres}</span>
-          </label>
-          <input
-            type="range"
-            min={100}
-            max={2000}
-            step={50}
-            value={config.limite_caracteres}
-            onChange={e => update('limite_caracteres', Number(e.target.value))}
-            style={{ accentColor: 'var(--accent)' }}
-            className="w-full"
-          />
-        </div>
+        <input
+          type="range" min={100} max={2000} step={50}
+          value={config.limite_caracteres}
+          onChange={e => update('limite_caracteres', Number(e.target.value))}
+          style={{ width: '100%', accentColor: 'var(--green-primary)' }}
+        />
       </div>
     </div>
   )

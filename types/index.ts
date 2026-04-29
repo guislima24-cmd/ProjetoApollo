@@ -1,3 +1,5 @@
+// ─── Gerador de mensagens ────────────────────────────────────────────────────
+
 export interface Lead {
   id: string
   nome: string
@@ -21,6 +23,7 @@ export interface CampaignConfig {
   tom: 'Formal' | 'Semiformal' | 'Direto'
   canal: 'LinkedIn' | 'Email'
   limite_caracteres: number
+  ia: 'gemini' | 'claude'
 }
 
 export interface ManualLead {
@@ -45,47 +48,42 @@ export interface ColumnMapping {
   email: string
 }
 
-// Pipeline Apollo Pro — lead no Google Sheets
-export interface PipelineLead {
-  id: string
+// ─── CRM / Planilha ──────────────────────────────────────────────────────────
+
+/** Registro de uma prospecção gravada na planilha. */
+export interface ProspectionRecord {
   nome: string
+  empresa: string
   cargo?: string
-  empresa: string
-  email?: string
-  linkedin_url?: string
-  fonte?: string               // 'LinkedIn' | 'Gmail' | 'Manual'
-  mensagem_gerada?: string
-  status: PipelineStatus
-  data_envio?: string
-  data_resposta?: string
-  responsavel?: string
-}
-
-export type PipelineStatus =
-  | 'novo'
-  | 'pronto_envio'
-  | 'enviado'
-  | 'respondeu'
-  | 'follow_up'
-
-// Lead capturado automaticamente para a aba de um membro
-export interface MemberLead {
-  nome: string
-  empresa: string
   setor?: string
-  canal?: 'E-mail' | 'LinkedIn'
-  email?: string
-  linkedin_url?: string
-  alvo?: string   // 'Conéctar' | 'RD'
+  canal: 'Email' | 'LinkedIn'
+  contato?: string        // URL LinkedIn ou endereço de email do lead
+  observacoes?: string
+  mensagem_ia?: string
 }
 
-// ─── Auth / Prospecção ───────────────────────────────────────────────────────
+export type ProspectionStatus =
+  | 'Aguardando'
+  | 'Respondeu'
+  | 'Reunião'
+  | 'Follow-up'
+  | 'Descartado'
+
+// ─── Gmail ───────────────────────────────────────────────────────────────────
+
+/** Lead extraído de um email enviado. */
+export interface ExtractedEmailLead {
+  messageId: string
+  threadId: string
+  email: string
+  nome: string
+  assunto: string
+  dataEnvio: string
+}
+
+// ─── Extração via IA (ProspectarForm) ───────────────────────────────────────
 
 export type ConfiancaNivel = 'alta' | 'media' | 'baixa'
-
-export interface SessionPayload {
-  responsavel: string
-}
 
 export interface ExtractionResult {
   nome: string | null
@@ -98,4 +96,31 @@ export interface ExtractionResult {
     empresa: ConfiancaNivel
     setor: ConfiancaNivel
   }
+}
+
+// ─── Legado (mantido para compatibilidade com rotas antigas) ─────────────────
+
+export interface PipelineLead {
+  id: string
+  nome: string
+  cargo?: string
+  empresa: string
+  email?: string
+  linkedin_url?: string
+  fonte?: string
+  mensagem_gerada?: string
+  status: 'novo' | 'pronto_envio' | 'enviado' | 'respondeu' | 'follow_up'
+  data_envio?: string
+  data_resposta?: string
+  responsavel?: string
+}
+
+export interface MemberLead {
+  nome: string
+  empresa: string
+  setor?: string
+  canal?: 'E-mail' | 'LinkedIn'
+  email?: string
+  linkedin_url?: string
+  alvo?: string
 }

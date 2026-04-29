@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>ProspectAI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 320px;
+      background: #0D0D0D;
+      color: #F8EDD9;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+    }
+
+    .header {
+      padding: 14px 16px;
+      border-bottom: 1px solid #242424;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo {
+      width: 28px; height: 28px;
+      background: #317039;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .header h1 { font-size: 15px; font-weight: 700; color: #F8EDD9; }
+    .header p  { font-size: 11px; color: #9a9585; margin-top: 1px; }
+
+    .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+    .status-card {
+      background: #141414;
+      border: 1px solid #242424;
+      border-radius: 8px;
+      padding: 11px 12px;
+    }
+
+    .status-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #5a5550;
+      margin-bottom: 5px;
+    }
+
+    .status-value { font-size: 13px; font-weight: 600; }
+    .status-ok    { color: #22c55e; }
+    .status-warn  { color: #F1BE49; }
+    .status-error { color: #ef4444; }
+
+    .queue-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(241,190,73,0.12);
+      color: #F1BE49;
+      padding: 2px 8px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 9px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary   { background: #317039; color: #F8EDD9; }
+    .btn-secondary { background: transparent; border: 1px solid #242424; color: #9a9585; }
+
+    /* ── Leads recentes ───────────────────────────────────────────────── */
+
+    .leads-section { display: flex; flex-direction: column; gap: 8px; }
+
+    .leads-section .status-label { margin-bottom: 2px; }
+
+    .lead-item {
+      background: #0a0a0a;
+      border: 1px solid #1e1e1e;
+      border-radius: 7px;
+      padding: 9px 10px;
+    }
+
+    .lead-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+
+    .lead-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: #F8EDD9;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 160px;
+    }
+
+    .lead-canal {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 100px;
+      flex-shrink: 0;
+    }
+    .canal-linkedin { background: rgba(10,102,194,0.2); color: #4fa3e0; }
+    .canal-email    { background: rgba(241,190,73,0.12); color: #F1BE49; }
+
+    .lead-sub {
+      font-size: 11px;
+      color: #6a6560;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 6px;
+    }
+
+    .lead-actions {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .status-btn {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 7px;
+      border-radius: 6px;
+      border: 1px solid #2a2a2a;
+      background: #141414;
+      color: #9a9585;
+      cursor: pointer;
+      transition: all 0.12s;
+      white-space: nowrap;
+    }
+    .status-btn:hover { border-color: #317039; color: #F8EDD9; }
+    .status-btn.active { background: #1d3d21; border-color: #317039; color: #4ade80; }
+    .status-btn.active-warn { background: #3d2d10; border-color: #ca8a04; color: #fbbf24; }
+    .status-btn.active-red  { background: #3d1212; border-color: #b91c1c; color: #f87171; }
+
+    .lead-date {
+      font-size: 10px;
+      color: #3a3530;
+      margin-top: 4px;
+    }
+
+    .no-leads {
+      text-align: center;
+      color: #3a3530;
+      font-size: 12px;
+      padding: 12px 0;
+    }
+
+    .footer {
+      padding: 10px 16px;
+      border-top: 1px solid #242424;
+      text-align: center;
+      font-size: 11px;
+      color: #5a5550;
+    }
+
+    #debugResult {
+      background: #141414;
+      border: 1px solid #242424;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 11px;
+      word-break: break-all;
+      white-space: pre-wrap;
+      color: #9a9585;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">✦</div>
+    <div>
+      <h1>ProspectAI</h1>
+      <p>UFABC Júnior · Comercial</p>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- Status de autenticação -->
+    <div class="status-card">
+      <div class="status-label">Status</div>
+      <div id="authStatus" class="status-value status-warn">Verificando...</div>
+    </div>
+
+    <!-- Fila pendente -->
+    <div id="queueSection" class="status-card" style="display:none">
+      <div class="status-label">Prospecções pendentes</div>
+      <span id="queueCount" class="queue-badge">0 na fila</span>
+      <button class="btn btn-secondary" id="syncBtn" style="margin-top:8px">
+        Sincronizar agora
+      </button>
+    </div>
+
+    <!-- Leads recentes -->
+    <div class="leads-section">
+      <div class="status-label">Últimas prospecções</div>
+      <div id="leadsList"><div class="no-leads">Nenhuma prospecção ainda</div></div>
+    </div>
+
+    <!-- Ações principais -->
+    <button class="btn btn-primary" id="openAppBtn">Abrir ProspectAI</button>
+    <button class="btn btn-secondary" id="debugBtn">Testar extração de perfil</button>
+    <div id="debugResult"></div>
+  </div>
+
+  <div class="footer" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+    <span>Extensão ativa em linkedin.com</span>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;color:#5a5550;">
+      <input type="checkbox" id="envToggle" style="accent-color:#317039;width:12px;height:12px;" />
+      Produção
+    </label>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
