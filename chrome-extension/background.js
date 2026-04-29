@@ -169,5 +169,12 @@ async function flushQueue() {
   await chrome.storage.local.set({ pendingQueue: failed })
 }
 
-chrome.runtime.onInstalled.addListener(flushQueue)
+chrome.runtime.onInstalled.addListener(async () => {
+  // Garante que o padrão seja produção num computador novo
+  const { useProduction } = await chrome.storage.local.get('useProduction')
+  if (useProduction === undefined) {
+    await chrome.storage.local.set({ useProduction: true })
+  }
+  flushQueue()
+})
 chrome.runtime.onStartup.addListener(flushQueue)
