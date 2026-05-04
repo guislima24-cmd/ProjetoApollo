@@ -871,3 +871,112 @@ export async function saveQualifiedLead(params: {
     }))
   }
 }
+
+// ─── Pipeline de descoberta de leads ─────────────────────────────────────────
+
+const DISCOVERED_TAB = '🔍 Descobertos'
+const DISCOVERED_HEADERS = [
+  'Data Descoberta', 'Empresa', 'CNPJ', 'Setor', 'Porte', 'Cidade',
+  'Email', 'Telefone', 'LinkedIn URL', 'Funcionários', 'Decisores',
+  'Potencial IA', 'Dores Típicas', 'Serviços Sugeridos', 'Argumento de Abertura', 'Status',
+]
+
+async function ensureDiscoveredTab(): Promise<void> {
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+  const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === DISCOVERED_TAB)
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: DISCOVERED_TAB } } }] },
+    })
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${DISCOVERED_TAB}'!A1:P1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [DISCOVERED_HEADERS] },
+    })
+  }
+}
+
+export interface DiscoveredLeadRecord {
+  empresa:            string
+  cnpj:               string
+  setor:              string
+  porte:              string
+  cidade:             string
+  email?:             string | null
+  telefone?:          string | null
+  linkedin_url?:      string | null
+  funcionarios?:      number | null
+  decisores?:         string[]
+  potencial?:         string | null
+  dores_tipicas?:     string[]
+  servicos_sugeridos?: string[]
+  argumento_abertura?: string | null
+  status?:            string
+}
+
+export async function saveDiscoveredLead(lead: DiscoveredLeadRecord): Promise<void> {
+  await ensureDiscoveredTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const now = new Date().toLocaleDateString('pt-BR')
+  const row = [
+    now,
+    sanitize(lead.empresa),
+    sanitize(lead.cnpj),
+    sanitize(lead.setor),
+    sanitize(lead.porte),
+    sanitize(lead.cidade),
+    sanitize(lead.email ?? ''),
+    sanitize(lead.telefone ?? ''),
+    sanitize(lead.linkedin_url ?? ''),
+    lead.funcionarios ?? '',
+    sanitize((lead.decisores ?? []).join('; ')),
+    sanitize(lead.potencial ?? ''),
+    sanitize((lead.dores_tipicas ?? []).join('; ')),
+    sanitize((lead.servicos_sugeridos ?? []).join('; ')),
+    sanitize(lead.argumento_abertura ?? ''),
+    sanitize(lead.status ?? 'Descoberto'),
+  ]
+
+  // Verifica se CNPJ já existe (coluna C) — atualiza em vez de duplicar
+  const colRes = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${DISCOVERED_TAB}'!C:C`,
+  }))
+  const colValues = colRes.data.values ?? []
+  const cnpjDigits = lead.cnpj.replace(/\D/g, '')
+
+  let existingRow = -1
+  for (let i = 1; i < colValues.length; i++) {
+    if ((colValues[i]?.[0] ?? '').replace(/\D/g, '') === cnpjDigits) {
+      existingRow = i + 1
+      break
+    }
+  }
+
+  if (existingRow > 1) {
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${DISCOVERED_TAB}'!A${existingRow}:P${existingRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [row] },
+    }))
+  } else {
+    let lastDataRow = 1
+    for (let i = colValues.length - 1; i >= 1; i--) {
+      if (colValues[i]?.[0]) { lastDataRow = i + 1; break }
+    }
+    const targetRow = Math.max(2, lastDataRow + 1)
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${DISCOVERED_TAB}'!A${targetRow}:P${targetRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [row] },
+    }))
+  }
+}
