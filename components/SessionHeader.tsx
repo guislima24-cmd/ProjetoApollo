@@ -119,6 +119,7 @@ export default function SessionHeader() {
             <NavLink href="/gerador?tab=bulk"   exact>Em Massa</NavLink>
             <NavLink href="/prospectar">Prospectar</NavLink>
             <NavLink href="/dashboard">Dashboard</NavLink>
+            <NavLink href="/qualificar">Qualificar Lead</NavLink>
             <NavLink href="/instalar">↓ Extensão</NavLink>
             <PlanilhaButton memberTab={session.user?.memberTab ?? ''} />
           </div>

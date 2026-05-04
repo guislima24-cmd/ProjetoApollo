@@ -301,10 +301,10 @@ async function applySheetFormatting(
     },
   })
 
-  // ── 5. Coluna H (Contato) — link azul ───────────────────────────────────────
+  // ── 5. Coluna G (Contato/Link) — link azul ──────────────────────────────────
   requests.push({
     repeatCell: {
-      range: { sheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 7, endColumnIndex: 8 },
+      range: { sheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 6, endColumnIndex: 7 },
       cell: {
         userEnteredFormat: {
           textFormat: {
@@ -329,11 +329,11 @@ async function applySheetFormatting(
     },
   })
 
-  // ── 7. Dropdown de Status (coluna I = índice 8) ──────────────────────────────
+  // ── 7. Dropdown de Status (coluna H = índice 7 = Quem respondeu?) ───────────
   const statusValues = ['Aguardando', 'Respondeu', 'Reunião', 'Follow-up', 'Descartado']
   requests.push({
     setDataValidation: {
-      range: { sheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 8, endColumnIndex: 9 },
+      range: { sheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 7, endColumnIndex: 8 },
       rule: {
         condition: {
           type: 'ONE_OF_LIST',
@@ -373,7 +373,7 @@ async function applySheetFormatting(
     requests.push({
       addConditionalFormatRule: {
         rule: {
-          ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 8, endColumnIndex: 9 }],
+          ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 1000, startColumnIndex: 7, endColumnIndex: 8 }],
           booleanRule: {
             condition: {
               type: 'TEXT_EQ',
@@ -408,17 +408,6 @@ async function applySheetFormatting(
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: { requests },
-  })
-}
-
-async function addHeadersToAllTabs(sheets: sheets_v4.Sheets, spreadsheetId: string, tabs: string[]) {
-  const data = tabs.map(tab => ({
-    range: `${quoteSheet(tab)}!A1:T1`,
-    values: [HEADERS],
-  }))
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: { valueInputOption: 'RAW', data },
   })
 }
 
@@ -785,4 +774,100 @@ export async function findProspectionByContact(
   }
 
   return null
+}
+
+// ─── Qualificação de leads ────────────────────────────────────────────────────
+
+const QUALIFIED_TAB = '🎯 Qualificados'
+const QUALIFIED_HEADERS = [
+  'Data', 'Empresa', 'Setor', 'Contato', 'Cargo',
+  'BANT Score', 'ICE Score', 'Score Final', 'Classificação', 'Veredicto IA', 'Qualificado por',
+]
+
+async function ensureQualifiedTab(): Promise<void> {
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+  const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === QUALIFIED_TAB)
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: QUALIFIED_TAB } } }] },
+    })
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${QUALIFIED_TAB}'!A1:K1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [QUALIFIED_HEADERS] },
+    })
+  }
+}
+
+export async function saveQualifiedLead(params: {
+  empresa: string
+  setor: string
+  contato: string
+  cargo: string
+  bantScore: number
+  iceScore: number
+  scoreFinal: number
+  classificacao: string
+  veredictoIa: string
+  memberTab: string
+}): Promise<void> {
+  await ensureQualifiedTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const now = new Date().toLocaleDateString('pt-BR')
+  const row = [
+    now,
+    sanitize(params.empresa),
+    sanitize(params.setor),
+    sanitize(params.contato),
+    sanitize(params.cargo),
+    params.bantScore,
+    params.iceScore.toFixed(1),
+    params.scoreFinal,
+    params.classificacao,
+    sanitize(params.veredictoIa),
+    sanitize(params.memberTab),
+  ]
+
+  // Verifica se empresa já existe — atualiza em vez de duplicar
+  const colRes = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${QUALIFIED_TAB}'!B:B`,
+  }))
+  const colValues = colRes.data.values ?? []
+  const empresaLower = params.empresa.toLowerCase().trim()
+
+  let existingRow = -1
+  for (let i = 1; i < colValues.length; i++) {
+    if ((colValues[i]?.[0] ?? '').toLowerCase().trim() === empresaLower) {
+      existingRow = i + 1
+      break
+    }
+  }
+
+  if (existingRow > 1) {
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${QUALIFIED_TAB}'!A${existingRow}:K${existingRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [row] },
+    }))
+  } else {
+    let lastDataRow = 1
+    for (let i = colValues.length - 1; i >= 1; i--) {
+      if (colValues[i]?.[0]) { lastDataRow = i + 1; break }
+    }
+    const targetRow = Math.max(2, lastDataRow + 1)
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${QUALIFIED_TAB}'!A${targetRow}:K${targetRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [row] },
+    }))
+  }
 }
