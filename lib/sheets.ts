@@ -918,6 +918,122 @@ export interface DiscoveredLeadRecord {
   status?:            string
 }
 
+// ─── Agente autônomo ──────────────────────────────────────────────────────────
+
+const AGENT_TAB = 'Leads Agente'
+const AGENT_HEADERS = [
+  'Data', 'Empresa', 'CNPJ', 'Setor', 'Porte', 'Cidade',
+  'Email', 'Telefone', 'LinkedIn URL', 'Seguidores', 'Emails Encontrados',
+  'Potencial IA', 'Justificativa', 'Dores Típicas', 'Serviços Sugeridos',
+  'Argumento', 'Status', 'Membro',
+]
+
+let agentTabEnsured = false
+
+async function ensureAgentTab(): Promise<void> {
+  if (agentTabEnsured) return
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+  const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === AGENT_TAB)
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: AGENT_TAB } } }] },
+    })
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${AGENT_TAB}'!A1:R1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [AGENT_HEADERS] },
+    })
+  }
+  agentTabEnsured = true
+}
+
+export async function saveAgentLead(params: {
+  empresa:             string
+  cnpj:                string
+  setor:               string
+  porte:               string
+  cidade:              string
+  email?:              string | null
+  telefone?:           string | null
+  linkedin_url?:       string | null
+  followers?:          string | null
+  potencial?:          string | null
+  justificativa?:      string | null
+  dores_tipicas?:      string[]
+  servicos_sugeridos?: string[]
+  argumento_abertura?: string | null
+  emails_encontrados?: string[]
+  status?:             string
+  memberTab:           string
+}): Promise<void> {
+  await ensureAgentTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const now = new Date().toLocaleDateString('pt-BR')
+  const row = [
+    now,
+    sanitize(params.empresa),
+    sanitize(params.cnpj),
+    sanitize(params.setor),
+    sanitize(params.porte),
+    sanitize(params.cidade),
+    sanitize(params.email              ?? ''),
+    sanitize(params.telefone           ?? ''),
+    sanitize(params.linkedin_url       ?? ''),
+    sanitize(params.followers          ?? ''),
+    sanitize((params.emails_encontrados ?? []).join('; ')),
+    sanitize(params.potencial          ?? ''),
+    sanitize(params.justificativa      ?? ''),
+    sanitize((params.dores_tipicas      ?? []).join('; ')),
+    sanitize((params.servicos_sugeridos ?? []).join('; ')),
+    sanitize(params.argumento_abertura ?? ''),
+    sanitize(params.status             ?? 'Descoberto pelo Agente'),
+    sanitize(params.memberTab),
+  ]
+
+  // Deduplicação por CNPJ (coluna C)
+  const colRes = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${AGENT_TAB}'!C:C`,
+  }))
+  const colValues = colRes.data.values ?? []
+  const cnpjDigits = params.cnpj.replace(/\D/g, '')
+
+  let existingRow = -1
+  for (let i = 1; i < colValues.length; i++) {
+    if ((colValues[i]?.[0] ?? '').replace(/\D/g, '') === cnpjDigits) {
+      existingRow = i + 1
+      break
+    }
+  }
+
+  if (existingRow > 1) {
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${AGENT_TAB}'!A${existingRow}:R${existingRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [row] },
+    }))
+  } else {
+    let lastDataRow = 1
+    for (let i = colValues.length - 1; i >= 1; i--) {
+      if (colValues[i]?.[0]) { lastDataRow = i + 1; break }
+    }
+    const targetRow = Math.max(2, lastDataRow + 1)
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${AGENT_TAB}'!A${targetRow}:R${targetRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [row] },
+    }))
+  }
+}
+
 export async function saveDiscoveredLead(lead: DiscoveredLeadRecord): Promise<void> {
   await ensureDiscoveredTab()
   const spreadsheetId = getSpreadsheetId()

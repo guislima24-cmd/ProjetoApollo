@@ -178,3 +178,5 @@ chrome.runtime.onInstalled.addListener(async () => {
   flushQueue()
 })
 chrome.runtime.onStartup.addListener(flushQueue)
+
+import './agent-mode.js'

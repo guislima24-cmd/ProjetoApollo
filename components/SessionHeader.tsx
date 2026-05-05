@@ -121,6 +121,7 @@ export default function SessionHeader() {
             <NavLink href="/dashboard">Dashboard</NavLink>
             <NavLink href="/descoberta">Descobrir Leads</NavLink>
             <NavLink href="/qualificar">Qualificar Lead</NavLink>
+            <NavLink href="/agente">Agente</NavLink>
             <NavLink href="/instalar">↓ Extensão</NavLink>
             <PlanilhaButton memberTab={session.user?.memberTab ?? ''} />
           </div>
