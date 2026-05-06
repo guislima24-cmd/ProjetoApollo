@@ -417,7 +417,7 @@ async function runApolloLoop() {
 
 // ── Listener de mensagens ─────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
   if (message.type === 'APOLLO_PING') {
     sendResponse({ ok: true, version: APOLLO_VERSION })
     return false
