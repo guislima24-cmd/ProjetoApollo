@@ -74,7 +74,8 @@ async function openTab(url) {
   const tab = await chrome.tabs.create({ url, active: false })
   const loaded = await waitForTabComplete(tab.id)
   if (!loaded) throw new Error('Timeout ao carregar: ' + url)
-  await new Promise(r => setTimeout(r, 2500))
+  // Dá tempo extra para o React/SPA renderizar o conteúdo
+  await new Promise(r => setTimeout(r, 4000))
   return tab.id
 }
 
@@ -109,41 +110,59 @@ async function extractSearchResults(tabId) {
   const [res] = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
-      const items = document.querySelectorAll(
-        'li.reusable-search__result-container, .entity-result__item, [data-view-name="search-entity-result-universal-template"]'
-      )
       const results = []
-      for (const item of items) {
-        const nameEl = item.querySelector(
-          '.entity-result__title-text a span[aria-hidden="true"], .entity-result__title-text a'
-        )
-        const name = nameEl?.textContent?.trim() ?? null
-        if (!name) continue
+      const seenUrls = new Set()
 
-        const linkEl = item.querySelector(
-          '.entity-result__title-text a[href*="/company/"], .entity-result__title-text a'
-        )
-        const rawUrl = linkEl?.href ?? null
-        const url = rawUrl ? rawUrl.split('?')[0].replace(/\/$/, '') : null
-
-        const industryEl = item.querySelector('.entity-result__primary-subtitle')
-        const industry = industryEl?.textContent?.trim() ?? null
-
-        const locationEl = item.querySelector('.entity-result__secondary-subtitle')
-        const location = locationEl?.textContent?.trim() ?? null
-
-        const descEl = item.querySelector('.entity-result__summary')
-        const description = descEl?.textContent?.trim() ?? null
-
-        const followersEl = item.querySelector('.entity-result__insights')
-        const followers = followersEl?.textContent?.trim() ?? null
-
-        results.push({ name, url, industry, location, description, followers })
+      function addResult(name, url, industry, location, description, followers) {
+        if (!name || name.length < 2 || name.length > 120) return
+        const cleanUrl = url ? url.split('?')[0].replace(/\/$/, '') : null
+        if (cleanUrl && seenUrls.has(cleanUrl)) return
+        if (cleanUrl) seenUrls.add(cleanUrl)
+        results.push({ name, url: cleanUrl, industry, location, description, followers })
       }
+
+      // Estratégia 1: seletores clássicos de containers
+      const CONTAINER_SEL = [
+        'li.reusable-search__result-container',
+        '[data-view-name="search-entity-result-universal-template"]',
+        '.search-results-container li',
+        '.reusable-search-simple-insight',
+      ].join(', ')
+      const containers = document.querySelectorAll(CONTAINER_SEL)
+      for (const c of containers) {
+        const link = c.querySelector('a[href*="/company/"]')
+        if (!link) continue
+        const name = c.querySelector('span[aria-hidden="true"]')?.textContent?.trim()
+                  || link.textContent?.trim()?.replace(/\s+/g, ' ')
+        addResult(
+          name,
+          link.href,
+          c.querySelector('.entity-result__primary-subtitle, [class*="primary-subtitle"]')?.textContent?.trim() ?? null,
+          c.querySelector('.entity-result__secondary-subtitle, [class*="secondary-subtitle"]')?.textContent?.trim() ?? null,
+          c.querySelector('.entity-result__summary, [class*="summary"]')?.textContent?.trim() ?? null,
+          c.querySelector('.entity-result__insights, [class*="insight"]')?.textContent?.trim() ?? null,
+        )
+      }
+
+      // Estratégia 2: fallback — qualquer link /company/ na página
+      if (results.length === 0) {
+        const allLinks = Array.from(document.querySelectorAll('a[href*="/company/"]'))
+        for (const link of allLinks) {
+          const href = link.href || ''
+          if (!href.includes('/company/')) continue
+          // Ignora links de navegação como /company/add, /company/setup
+          if (/\/(add|setup|admin|create)/.test(href)) continue
+          const name = link.querySelector('span[aria-hidden="true"]')?.textContent?.trim()
+                    || link.getAttribute('aria-label')
+                    || link.textContent?.trim()?.replace(/\s+/g, ' ')
+          addResult(name, href, null, null, null, null)
+        }
+      }
+
       return results
     },
   })
-  return res?.result ?? []
+  return (res?.result ?? []).filter(r => r.name && r.url)
 }
 
 // ── Extração de detalhes da página da empresa ────────────────────────────────
