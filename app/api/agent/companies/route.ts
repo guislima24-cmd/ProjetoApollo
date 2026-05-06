@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
   const perRegiao  = Math.ceil(limite / Math.max(regioes.length, 1))
   const results: unknown[] = []
   const seenCnpj   = new Set<string>()
+  let lastError: string | null = null
 
   for (const regiao of regioes) {
     if (results.length >= limite) break
@@ -95,12 +96,14 @@ export async function GET(req: NextRequest) {
         })
       }
     } catch (err) {
-      console.error(`[agent/companies] Fetch error para "${municipio}":`, err)
+      const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+      console.error(`[agent/companies] Fetch error para "${municipio}":`, msg)
+      lastError = msg
     }
   }
 
   if (!results.length) {
-    return Response.json({ ok: false, error: 'Nenhuma empresa encontrada com esses filtros. Tente outro setor ou região.' })
+    return Response.json({ ok: false, error: lastError ?? 'Nenhuma empresa encontrada com esses filtros.' })
   }
 
   return Response.json({ ok: true, companies: results })
