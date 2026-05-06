@@ -1040,6 +1040,165 @@ export async function saveAgentLead(params: {
   }
 }
 
+// ─── Apollo.io lead pipeline ──────────────────────────────────────────────────
+
+const APOLLO_TAB = 'Leads Apollo'
+const APOLLO_HEADERS = [
+  'Data',           // A
+  'Empresa',        // B
+  'Website',        // C
+  'Setor',          // D
+  'Porte',          // E
+  'Funcionários',   // F
+  'Localização',    // G
+  'Email',          // H
+  'Telefone',       // I
+  'LinkedIn Empresa', // J
+  'Apollo URL',     // K
+  'Decisores',      // L
+  'Emails Encontrados', // M
+  'CNPJ',           // N
+  'Potencial IA',   // O
+  'Justificativa',  // P
+  'Dores Típicas',  // Q
+  'Serviços Sugeridos', // R
+  'Argumento de Abertura', // S
+  'Score Fit',      // T
+  'Resumo do Site', // U
+  'Contato Principal', // V
+  'Cargo Principal', // W
+  'Email Principal', // X
+  'Status',         // Y
+  'Membro',         // Z
+]
+
+let apolloTabEnsured = false
+
+async function ensureApolloTab(): Promise<void> {
+  if (apolloTabEnsured) return
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+  const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === APOLLO_TAB)
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: APOLLO_TAB } } }] },
+    })
+  }
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${APOLLO_TAB}'!A1:Z1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [APOLLO_HEADERS] },
+  }))
+  apolloTabEnsured = true
+}
+
+export async function saveApolloLead(params: {
+  empresa:             string
+  website?:            string | null
+  setor?:              string | null
+  porte?:              string | null
+  funcionarios?:       string | null
+  cidade?:             string | null
+  email?:              string | null
+  telefone?:           string | null
+  linkedin_url?:       string | null
+  apollo_url?:         string | null
+  decision_makers?:    { name: string; role: string; profile_url: string | null }[]
+  emails_encontrados?: string[]
+  cnpj?:               string | null
+  potencial?:          string | null
+  justificativa?:      string | null
+  dores_tipicas?:      string[]
+  servicos_sugeridos?: string[]
+  argumento_abertura?: string | null
+  score_fit?:          number | null
+  resumo_site?:        string | null
+  status?:             string
+  memberTab:           string
+}): Promise<void> {
+  await ensureApolloTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const now = new Date().toLocaleDateString('pt-BR')
+
+  const decisoresStr = (params.decision_makers ?? [])
+    .map(dm => `${dm.name} (${dm.role})${dm.profile_url ? ' — ' + dm.profile_url.replace('https://', '') : ''}`)
+    .join('\n')
+
+  const firstDm    = params.decision_makers?.[0]
+  const firstEmail = params.emails_encontrados?.[0] ?? params.email ?? ''
+
+  const row = [
+    now,
+    sanitize(params.empresa),
+    sanitize(params.website            ?? ''),
+    sanitize(params.setor              ?? ''),
+    sanitize(params.porte              ?? ''),
+    sanitize(params.funcionarios       ?? ''),
+    sanitize(params.cidade             ?? ''),
+    sanitize(params.email              ?? ''),
+    sanitize(params.telefone           ?? ''),
+    sanitize(params.linkedin_url       ?? ''),
+    sanitize(params.apollo_url         ?? ''),
+    decisoresStr,
+    sanitize((params.emails_encontrados ?? []).join('; ')),
+    sanitize(params.cnpj               ?? ''),
+    sanitize(params.potencial          ?? ''),
+    sanitize(params.justificativa      ?? ''),
+    sanitize((params.dores_tipicas      ?? []).join('; ')),
+    sanitize((params.servicos_sugeridos ?? []).join('; ')),
+    sanitize(params.argumento_abertura ?? ''),
+    params.score_fit != null ? String(params.score_fit) : '',
+    sanitize((params.resumo_site ?? '').slice(0, 300)),
+    sanitize(firstDm?.name             ?? ''),
+    sanitize(firstDm?.role             ?? ''),
+    sanitize(firstEmail),
+    sanitize(params.status             ?? 'Descoberto pelo Apollo'),
+    sanitize(params.memberTab),
+  ]
+
+  // Dedup by website (col C) or apollo_url (col K)
+  const batchRes = await withRetry(() => sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: [`'${APOLLO_TAB}'!C:C`, `'${APOLLO_TAB}'!K:K`],
+  }))
+  const websiteValues = batchRes.data.valueRanges?.[0]?.values ?? []
+  const apolloValues  = batchRes.data.valueRanges?.[1]?.values ?? []
+
+  const website   = (params.website    ?? '').trim().replace(/\/+$/, '').toLowerCase()
+  const apolloUrl = (params.apollo_url ?? '').trim()
+
+  let existingRow = -1
+  for (let i = 1; i < Math.max(websiteValues.length, apolloValues.length); i++) {
+    const rowSite   = (websiteValues[i]?.[0] ?? '').trim().replace(/\/+$/, '').toLowerCase()
+    const rowApollo = (apolloValues[i]?.[0]  ?? '').trim()
+    if (website   && rowSite   === website)   { existingRow = i + 1; break }
+    if (apolloUrl && rowApollo === apolloUrl) { existingRow = i + 1; break }
+  }
+
+  if (existingRow > 1) {
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${APOLLO_TAB}'!A${existingRow}:Z${existingRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [row] },
+    }))
+  } else {
+    const lastRow = Math.max(websiteValues.length, apolloValues.length, 1)
+    const targetRow = Math.max(2, lastRow + 1)
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${APOLLO_TAB}'!A${targetRow}:Z${targetRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [row] },
+    }))
+  }
+}
+
 export async function saveDiscoveredLead(lead: DiscoveredLeadRecord): Promise<void> {
   await ensureDiscoveredTab()
   const spreadsheetId = getSpreadsheetId()

@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 
 type AgentState = 'idle' | 'scraping' | 'paused' | 'done' | 'error'
+type AgentMode  = 'linkedin' | 'apollo'
 
 interface DecisionMaker {
   name:        string
@@ -29,6 +30,29 @@ interface ProcessedLead {
   servicos_sugeridos: string[]
   argumento_abertura: string | null
   emails:             string[]
+  ok:                 boolean
+}
+
+interface ApolloLead {
+  nome:               string
+  setor:              string
+  porte:              string | null
+  cidade:             string | null
+  funcionarios:       string | null
+  website:            string | null
+  apollo_url:         string | null
+  linkedin_url:       string | null
+  email:              string | null
+  telefone:           string | null
+  cnpj:               string | null
+  potencial:          string | null
+  justificativa:      string | null
+  dores_tipicas:      string[]
+  servicos_sugeridos: string[]
+  argumento_abertura: string | null
+  score_fit:          number | null
+  emails:             string[]
+  decision_makers:    DecisionMaker[]
   ok:                 boolean
 }
 
@@ -57,6 +81,8 @@ export default function AgentePage() {
   const { data: session, status } = useSession()
   const router = useRouter()
 
+  const [mode, setMode] = useState<AgentMode>('linkedin')
+
   const [extId,       setExtId]       = useState('')
   const [extStatus,   setExtStatus]   = useState<'unknown' | 'connected' | 'disconnected'>('unknown')
 
@@ -72,7 +98,16 @@ export default function AgentePage() {
   const [errorMsg,    setErrorMsg]    = useState<string | null>(null)
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Apollo mode state
+  const [apolloState,      setApolloState]      = useState<AgentState>('idle')
+  const [apolloLeads,      setApolloLeads]      = useState<ApolloLead[]>([])
+  const [apolloProgress,   setApolloProgress]   = useState({ done: 0, total: 0 })
+  const [apolloPauseReason,setApolloPauseReason] = useState<string | null>(null)
+  const [apolloErrorMsg,   setApolloErrorMsg]   = useState<string | null>(null)
+  const [apolloExpandedIdx,setApolloExpandedIdx] = useState<number | null>(null)
+
+  const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const apolloPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login')
@@ -139,6 +174,31 @@ export default function AgentePage() {
     }, 2000)
   }
 
+  function startApolloPolling() {
+    if (apolloPollRef.current) clearInterval(apolloPollRef.current)
+    apolloPollRef.current = setInterval(async () => {
+      const res = await sendToExt({ type: 'APOLLO_GET_RESULTS' })
+      if (!res?.ok) return
+
+      setApolloProgress(res.progress ?? { done: 0, total: 0 })
+      setApolloPauseReason(res.pauseReason ?? null)
+
+      if (res.results?.length) {
+        setApolloLeads(prev => [...prev, ...res.results])
+      }
+
+      if (res.state === 'done' || res.state === 'error' || res.state === 'paused') {
+        clearInterval(apolloPollRef.current!)
+        apolloPollRef.current = null
+        setApolloState(
+          res.state === 'paused' ? 'paused' :
+          res.state === 'done'   ? 'done'   : 'error'
+        )
+        if (res.errorMessage) setApolloErrorMsg(res.errorMessage)
+      }
+    }, 2000)
+  }
+
   async function handleStart() {
     if (!extId || extStatus !== 'connected') return
 
@@ -187,11 +247,64 @@ export default function AgentePage() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
   }
 
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+  async function handleApolloStart() {
+    if (!extId || extStatus !== 'connected') return
+
+    setApolloLeads([])
+    setApolloProgress({ done: 0, total: 0 })
+    setApolloErrorMsg(null)
+    setApolloPauseReason(null)
+    setApolloExpandedIdx(null)
+    setApolloState('scraping')
+
+    const queueRes = await sendToExt({
+      type: 'APOLLO_SCRAPE_QUEUE',
+      searchParams: { setor, portes, limite },
+    })
+
+    if (!queueRes?.ok) {
+      setApolloErrorMsg(queueRes?.error ?? 'Erro ao iniciar o agente Apollo.')
+      setApolloState('error')
+      return
+    }
+
+    setApolloProgress({ done: 0, total: queueRes.target ?? limite })
+    startApolloPolling()
+  }
+
+  async function handleApolloPause() {
+    await sendToExt({ type: 'APOLLO_PAUSE' })
+    setApolloState('paused')
+    if (apolloPollRef.current) { clearInterval(apolloPollRef.current); apolloPollRef.current = null }
+  }
+
+  async function handleApolloResume() {
+    await sendToExt({ type: 'APOLLO_RESUME' })
+    setApolloState('scraping')
+    startApolloPolling()
+  }
+
+  async function handleApolloClear() {
+    await sendToExt({ type: 'APOLLO_CLEAR' })
+    setApolloLeads([])
+    setApolloProgress({ done: 0, total: 0 })
+    setApolloState('idle')
+    setApolloErrorMsg(null)
+    setApolloPauseReason(null)
+    setApolloExpandedIdx(null)
+    if (apolloPollRef.current) { clearInterval(apolloPollRef.current); apolloPollRef.current = null }
+  }
+
+  useEffect(() => () => {
+    if (pollRef.current)      clearInterval(pollRef.current)
+    if (apolloPollRef.current) clearInterval(apolloPollRef.current)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (status === 'loading') return null
 
-  const canStart = !!setor && regioes.length > 0 && extStatus === 'connected'
+  const canStart       = !!setor && regioes.length > 0 && extStatus === 'connected'
+  const canApolloStart = !!setor && extStatus === 'connected'
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 20px' }}>
@@ -202,9 +315,28 @@ export default function AgentePage() {
           ✦ Agente Autônomo
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 6, lineHeight: 1.6 }}>
-          Descobre empresas diretamente no LinkedIn por setor e região, extrai decisores e enriquece com CNPJ automaticamente.
-          Requer a extensão ProspectAI instalada e login no LinkedIn.
+          Descobre empresas por setor automaticamente e enriquece com CNPJ, email e análise IA.
+          Requer a extensão ProspectAI instalada.
         </p>
+      </div>
+
+      {/* Seletor de modo */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        {(['linkedin', 'apollo'] as AgentMode[]).map(m => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            style={{
+              padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+              border: `1px solid ${mode === m ? 'var(--green-primary)' : 'var(--border)'}`,
+              background: mode === m ? 'rgba(49,112,57,0.18)' : 'transparent',
+              color: mode === m ? 'var(--green-primary)' : 'var(--text-muted)',
+              cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
+            }}
+          >
+            {m === 'linkedin' ? '🔗 LinkedIn' : '🚀 Apollo.io'}
+          </button>
+        ))}
       </div>
 
       {/* Conexão com extensão */}
@@ -245,7 +377,7 @@ export default function AgentePage() {
         )}
       </div>
 
-      {/* Filtros */}
+      {/* Filtros (compartilhados entre modos) */}
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
 
@@ -279,30 +411,41 @@ export default function AgentePage() {
             </div>
           </div>
 
-          {/* Regiões */}
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label className="section-label">Regiões *</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-              {REGIONS.map(r => {
-                const active = regioes.includes(r)
-                return (
-                  <button
-                    key={r}
-                    onClick={() => setRegioes(p => active ? p.filter(x => x !== r) : [...p, r])}
-                    style={{
-                      padding: '5px 12px', borderRadius: 20, fontSize: 12,
-                      border: `1px solid ${active ? 'var(--green-primary)' : 'var(--border)'}`,
-                      background: active ? 'rgba(49,112,57,0.15)' : 'transparent',
-                      color: active ? 'var(--green-primary)' : 'var(--text-secondary)',
-                      cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', transition: 'all 0.15s',
-                    }}
-                  >
-                    {r}
-                  </button>
-                )
-              })}
+          {/* Regiões — só no modo LinkedIn */}
+          {mode === 'linkedin' && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label className="section-label">Regiões *</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                {REGIONS.map(r => {
+                  const active = regioes.includes(r)
+                  return (
+                    <button
+                      key={r}
+                      onClick={() => setRegioes(p => active ? p.filter(x => x !== r) : [...p, r])}
+                      style={{
+                        padding: '5px 12px', borderRadius: 20, fontSize: 12,
+                        border: `1px solid ${active ? 'var(--green-primary)' : 'var(--border)'}`,
+                        background: active ? 'rgba(49,112,57,0.15)' : 'transparent',
+                        color: active ? 'var(--green-primary)' : 'var(--text-secondary)',
+                        cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', transition: 'all 0.15s',
+                      }}
+                    >
+                      {r}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Apollo: nota sobre localização */}
+          {mode === 'apollo' && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
+                🌐 O Apollo.io usa a localização <strong>Brasil</strong> automaticamente. Para refinar por cidade, ajuste o filtro dentro do Apollo após o agente abrir a página.
+              </p>
+            </div>
+          )}
 
           {/* Portes */}
           <div style={{ gridColumn: '1 / -1' }}>
@@ -330,243 +473,397 @@ export default function AgentePage() {
           </div>
         </div>
 
-        {/* Botões de controle */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 22, alignItems: 'center', flexWrap: 'wrap' }}>
-          {(agentState === 'idle' || agentState === 'done' || agentState === 'error') && (
-            <button
-              className="btn-primary"
-              onClick={handleStart}
-              disabled={!canStart}
-              style={{ opacity: canStart ? 1 : 0.4 }}
-            >
-              {agentState === 'idle' ? '▶ Iniciar Agente' : '▶ Nova Busca'}
-            </button>
-          )}
+        {/* Botões de controle — LinkedIn */}
+        {mode === 'linkedin' && (
+          <div style={{ display: 'flex', gap: 10, marginTop: 22, alignItems: 'center', flexWrap: 'wrap' }}>
+            {(agentState === 'idle' || agentState === 'done' || agentState === 'error') && (
+              <button
+                className="btn-primary"
+                onClick={handleStart}
+                disabled={!canStart}
+                style={{ opacity: canStart ? 1 : 0.4 }}
+              >
+                {agentState === 'idle' ? '▶ Iniciar Agente' : '▶ Nova Busca'}
+              </button>
+            )}
 
-          {agentState === 'scraping' && (
-            <button className="btn-secondary" onClick={handlePause}>⏸ Pausar</button>
-          )}
+            {agentState === 'scraping' && (
+              <button className="btn-secondary" onClick={handlePause}>⏸ Pausar</button>
+            )}
 
-          {agentState === 'paused' && (
-            <>
-              <button className="btn-primary" onClick={handleResume}>▶ Retomar</button>
-              <span style={{ fontSize: 12, color: '#f59e0b' }}>
-                {pauseReason === 'login'   ? '⚠ Faça login no LinkedIn e retome' :
-                 pauseReason === 'captcha' ? '⚠ Resolva o captcha no LinkedIn e retome' :
-                 '⏸ Pausado'}
-              </span>
-            </>
-          )}
+            {agentState === 'paused' && (
+              <>
+                <button className="btn-primary" onClick={handleResume}>▶ Retomar</button>
+                <span style={{ fontSize: 12, color: '#f59e0b' }}>
+                  {pauseReason === 'login'   ? '⚠ Faça login no LinkedIn e retome' :
+                   pauseReason === 'captcha' ? '⚠ Resolva o captcha no LinkedIn e retome' :
+                   '⏸ Pausado'}
+                </span>
+              </>
+            )}
 
-          {leads.length > 0 && agentState !== 'scraping' && (
-            <button
-              onClick={handleClear}
-              style={{
-                marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)',
-                color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 7,
-                fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans',
-              }}
-            >
-              🗑 Limpar
-            </button>
-          )}
-        </div>
+            {leads.length > 0 && agentState !== 'scraping' && (
+              <button
+                onClick={handleClear}
+                style={{
+                  marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)',
+                  color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 7,
+                  fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans',
+                }}
+              >
+                🗑 Limpar
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Botões de controle — Apollo */}
+        {mode === 'apollo' && (
+          <div style={{ display: 'flex', gap: 10, marginTop: 22, alignItems: 'center', flexWrap: 'wrap' }}>
+            {(apolloState === 'idle' || apolloState === 'done' || apolloState === 'error') && (
+              <button
+                className="btn-primary"
+                onClick={handleApolloStart}
+                disabled={!canApolloStart}
+                style={{ opacity: canApolloStart ? 1 : 0.4 }}
+              >
+                {apolloState === 'idle' ? '🚀 Iniciar Apollo' : '🚀 Nova Busca'}
+              </button>
+            )}
+
+            {apolloState === 'scraping' && (
+              <button className="btn-secondary" onClick={handleApolloPause}>⏸ Pausar</button>
+            )}
+
+            {apolloState === 'paused' && (
+              <>
+                <button className="btn-primary" onClick={handleApolloResume}>▶ Retomar</button>
+                <span style={{ fontSize: 12, color: '#f59e0b' }}>
+                  {apolloPauseReason === 'login' ? '⚠ Faça login no Apollo.io e retome' : '⏸ Pausado'}
+                </span>
+              </>
+            )}
+
+            {apolloLeads.length > 0 && apolloState !== 'scraping' && (
+              <button
+                onClick={handleApolloClear}
+                style={{
+                  marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)',
+                  color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 7,
+                  fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans',
+                }}
+              >
+                🗑 Limpar
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Barra de progresso */}
-      {progress.total > 0 && (
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
-            <span>
-              {agentState === 'scraping' && (
-                <><span className="spinner" style={{ display: 'inline-block', width: 11, height: 11, marginRight: 6 }} />Processando…</>
-              )}
-              {agentState === 'paused' && '⏸ Pausado'}
-              {agentState === 'done'   && '✓ Concluído'}
-            </span>
-            <span style={{ fontWeight: 600 }}>{progress.done} / {progress.total}</span>
-          </div>
-          <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%', borderRadius: 2,
-              background: agentState === 'paused' ? '#f59e0b' : 'var(--green-primary)',
-              width: `${Math.round((progress.done / progress.total) * 100)}%`,
-              transition: 'width 0.4s',
-            }} />
-          </div>
-        </div>
-      )}
-
-      {/* Mensagem de erro */}
-      {agentState === 'error' && errorMsg && (
-        <div className="card" style={{ marginBottom: 16, border: '1px solid #ef4444', background: 'rgba(239,68,68,0.07)', padding: '12px 16px' }}>
-          <p style={{ fontSize: 13, color: '#ef4444', margin: 0 }}>⚠ {errorMsg}</p>
-        </div>
-      )}
-
-      {/* Lista de leads */}
-      {leads.length > 0 && (
-        <div>
-          <p className="section-label" style={{ marginBottom: 12 }}>
-            {leads.length} empresa{leads.length !== 1 ? 's' : ''} processada{leads.length !== 1 ? 's' : ''}
-          </p>
-
-          {leads.map((lead, idx) => (
-            <div
-              key={`${lead.linkedin_url ?? lead.nome}-${idx}`}
-              className="card fade-in"
-              style={{ marginBottom: 10, cursor: 'pointer', padding: '14px 18px' }}
-              onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}
-            >
-              {/* Header do card */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 700, color: 'var(--cream)', fontSize: 14 }}>{lead.nome}</span>
-                    {lead.potencial && (
-                      <span className="badge" style={{
-                        background: potencialColor(lead.potencial) + '22',
-                        color:      potencialColor(lead.potencial),
-                        border:     `1px solid ${potencialColor(lead.potencial)}44`,
-                        fontSize: 11,
-                      }}>
-                        {lead.potencial}
-                      </span>
-                    )}
-                    {!lead.ok && (
-                      <span className="badge" style={{
-                        background: 'rgba(239,68,68,0.1)', color: '#ef4444',
-                        border: '1px solid rgba(239,68,68,0.2)', fontSize: 11,
-                      }}>
-                        sem LinkedIn
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
-                    {lead.setor}{lead.cidade ? ` · ${lead.cidade}` : ''}{lead.porte ? ` · ${lead.porte}` : ''}
-                    {lead.employees_count ? ` · ${lead.employees_count}` : ''}
-                    {lead.decision_makers?.length ? ` · ${lead.decision_makers.length} decisor${lead.decision_makers.length !== 1 ? 'es' : ''}` : ''}
-                  </div>
-                </div>
-                <span style={{ color: 'var(--text-muted)', fontSize: 11, flexShrink: 0 }}>
-                  {expandedIdx === idx ? '▲' : '▼'}
+      {/* ── MODO LINKEDIN ─────────────────────────────────────────── */}
+      {mode === 'linkedin' && (
+        <>
+          {/* Barra de progresso */}
+          {progress.total > 0 && (
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                <span>
+                  {agentState === 'scraping' && (
+                    <><span className="spinner" style={{ display: 'inline-block', width: 11, height: 11, marginRight: 6 }} />Processando…</>
+                  )}
+                  {agentState === 'paused' && '⏸ Pausado'}
+                  {agentState === 'done'   && '✓ Concluído'}
                 </span>
+                <span style={{ fontWeight: 600 }}>{progress.done} / {progress.total}</span>
               </div>
-
-              {/* Detalhes */}
-              {expandedIdx === idx && (
-                <div
-                  style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}
-                  onClick={e => e.stopPropagation()}
-                >
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-
-                    {/* Contato */}
-                    <div>
-                      <p className="section-label" style={{ marginBottom: 8 }}>Contato</p>
-                      {lead.email && (
-                        <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>✉ {lead.email}</p>
-                      )}
-                      {lead.telefone && (
-                        <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>☎ {lead.telefone}</p>
-                      )}
-                      {lead.emails?.filter(e => e !== lead.email).map(e => (
-                        <p key={e} style={{ fontSize: 12, color: '#4fa3e0', margin: '4px 0' }}>✉ {e}</p>
-                      ))}
-                      {lead.linkedin_url && (
-                        <a
-                          href={lead.linkedin_url} target="_blank" rel="noreferrer"
-                          style={{ fontSize: 12, color: '#4fa3e0', display: 'block', marginTop: 4 }}
-                        >
-                          LinkedIn ↗
-                        </a>
-                      )}
-                      {!lead.email && !lead.telefone && !(lead.emails?.length) && !lead.linkedin_url && (
-                        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sem dados de contato</p>
-                      )}
-                    </div>
-
-                    {/* Análise IA */}
-                    <div>
-                      {lead.justificativa && (
-                        <>
-                          <p className="section-label" style={{ marginBottom: 6 }}>Análise IA</p>
-                          <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
-                            {lead.justificativa}
-                          </p>
-                        </>
-                      )}
-                      {lead.argumento_abertura && (
-                        <>
-                          <p className="section-label" style={{ marginBottom: 6, marginTop: 12 }}>Argumento de abertura</p>
-                          <p style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.6, margin: 0 }}>
-                            &ldquo;{lead.argumento_abertura}&rdquo;
-                          </p>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Decisores */}
-                    {(lead.decision_makers?.length ?? 0) > 0 && (
-                      <div style={{ gridColumn: '1 / -1' }}>
-                        <p className="section-label" style={{ marginBottom: 8 }}>Decisores</p>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {lead.decision_makers.map((dm, i) => (
-                            <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <span style={{ color: 'var(--cream)', fontWeight: 600 }}>{dm.name}</span>
-                              <span style={{ color: 'var(--text-muted)' }}>·</span>
-                              <span style={{ color: 'var(--text-secondary)' }}>{dm.role}</span>
-                              {dm.profile_url && (
-                                <a
-                                  href={dm.profile_url} target="_blank" rel="noreferrer"
-                                  style={{ color: '#4fa3e0', marginLeft: 'auto' }}
-                                >
-                                  LinkedIn ↗
-                                </a>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Dores */}
-                    {(lead.dores_tipicas?.length ?? 0) > 0 && (
-                      <div>
-                        <p className="section-label" style={{ marginBottom: 8 }}>Dores típicas</p>
-                        {lead.dores_tipicas.map((d, i) => (
-                          <p key={i} style={{ fontSize: 12, color: '#ef4444', margin: '3px 0' }}>! {d}</p>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Serviços */}
-                    {(lead.servicos_sugeridos?.length ?? 0) > 0 && (
-                      <div>
-                        <p className="section-label" style={{ marginBottom: 8 }}>Serviços sugeridos</p>
-                        {lead.servicos_sugeridos.map((s, i) => (
-                          <p key={i} style={{ fontSize: 12, color: 'var(--green-primary)', margin: '3px 0' }}>✓ {s}</p>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+              <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 2,
+                  background: agentState === 'paused' ? '#f59e0b' : 'var(--green-primary)',
+                  width: `${Math.round((progress.done / progress.total) * 100)}%`,
+                  transition: 'width 0.4s',
+                }} />
+              </div>
             </div>
-          ))}
-        </div>
+          )}
+
+          {agentState === 'error' && errorMsg && (
+            <div className="card" style={{ marginBottom: 16, border: '1px solid #ef4444', background: 'rgba(239,68,68,0.07)', padding: '12px 16px' }}>
+              <p style={{ fontSize: 13, color: '#ef4444', margin: 0 }}>⚠ {errorMsg}</p>
+            </div>
+          )}
+
+          {leads.length > 0 && (
+            <div>
+              <p className="section-label" style={{ marginBottom: 12 }}>
+                {leads.length} empresa{leads.length !== 1 ? 's' : ''} processada{leads.length !== 1 ? 's' : ''}
+              </p>
+
+              {leads.map((lead, idx) => (
+                <div
+                  key={`${lead.linkedin_url ?? lead.nome}-${idx}`}
+                  className="card fade-in"
+                  style={{ marginBottom: 10, cursor: 'pointer', padding: '14px 18px' }}
+                  onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, color: 'var(--cream)', fontSize: 14 }}>{lead.nome}</span>
+                        {lead.potencial && (
+                          <span className="badge" style={{
+                            background: potencialColor(lead.potencial) + '22',
+                            color:      potencialColor(lead.potencial),
+                            border:     `1px solid ${potencialColor(lead.potencial)}44`,
+                            fontSize: 11,
+                          }}>
+                            {lead.potencial}
+                          </span>
+                        )}
+                        {!lead.ok && (
+                          <span className="badge" style={{
+                            background: 'rgba(239,68,68,0.1)', color: '#ef4444',
+                            border: '1px solid rgba(239,68,68,0.2)', fontSize: 11,
+                          }}>sem LinkedIn</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+                        {lead.setor}{lead.cidade ? ` · ${lead.cidade}` : ''}{lead.porte ? ` · ${lead.porte}` : ''}
+                        {lead.employees_count ? ` · ${lead.employees_count}` : ''}
+                        {lead.decision_makers?.length ? ` · ${lead.decision_makers.length} decisor${lead.decision_makers.length !== 1 ? 'es' : ''}` : ''}
+                      </div>
+                    </div>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11, flexShrink: 0 }}>
+                      {expandedIdx === idx ? '▲' : '▼'}
+                    </span>
+                  </div>
+
+                  {expandedIdx === idx && (
+                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                        <div>
+                          <p className="section-label" style={{ marginBottom: 8 }}>Contato</p>
+                          {lead.email    && <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>✉ {lead.email}</p>}
+                          {lead.telefone && <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>☎ {lead.telefone}</p>}
+                          {lead.emails?.filter(e => e !== lead.email).map(e => (
+                            <p key={e} style={{ fontSize: 12, color: '#4fa3e0', margin: '4px 0' }}>✉ {e}</p>
+                          ))}
+                          {lead.linkedin_url && (
+                            <a href={lead.linkedin_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#4fa3e0', display: 'block', marginTop: 4 }}>LinkedIn ↗</a>
+                          )}
+                          {!lead.email && !lead.telefone && !(lead.emails?.length) && !lead.linkedin_url && (
+                            <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sem dados de contato</p>
+                          )}
+                        </div>
+                        <div>
+                          {lead.justificativa && (
+                            <>
+                              <p className="section-label" style={{ marginBottom: 6 }}>Análise IA</p>
+                              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>{lead.justificativa}</p>
+                            </>
+                          )}
+                          {lead.argumento_abertura && (
+                            <>
+                              <p className="section-label" style={{ marginBottom: 6, marginTop: 12 }}>Argumento de abertura</p>
+                              <p style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.6, margin: 0 }}>&ldquo;{lead.argumento_abertura}&rdquo;</p>
+                            </>
+                          )}
+                        </div>
+                        {(lead.decision_makers?.length ?? 0) > 0 && (
+                          <div style={{ gridColumn: '1 / -1' }}>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Decisores</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {lead.decision_makers.map((dm, i) => (
+                                <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <span style={{ color: 'var(--cream)', fontWeight: 600 }}>{dm.name}</span>
+                                  <span style={{ color: 'var(--text-muted)' }}>·</span>
+                                  <span style={{ color: 'var(--text-secondary)' }}>{dm.role}</span>
+                                  {dm.profile_url && <a href={dm.profile_url} target="_blank" rel="noreferrer" style={{ color: '#4fa3e0', marginLeft: 'auto' }}>LinkedIn ↗</a>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {(lead.dores_tipicas?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Dores típicas</p>
+                            {lead.dores_tipicas.map((d, i) => <p key={i} style={{ fontSize: 12, color: '#ef4444', margin: '3px 0' }}>! {d}</p>)}
+                          </div>
+                        )}
+                        {(lead.servicos_sugeridos?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Serviços sugeridos</p>
+                            {lead.servicos_sugeridos.map((s, i) => <p key={i} style={{ fontSize: 12, color: 'var(--green-primary)', margin: '3px 0' }}>✓ {s}</p>)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {leads.length === 0 && (agentState === 'idle' || agentState === 'done') && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
+              <p style={{ fontSize: 36, margin: '0 0 12px' }}>🤖</p>
+              <p style={{ fontSize: 14 }}>
+                {agentState === 'idle'
+                  ? 'Configure os filtros e inicie o agente para descobrir leads automaticamente.'
+                  : 'Nenhum lead retornado. Tente ajustar os filtros.'}
+              </p>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Estado vazio */}
-      {leads.length === 0 && (agentState === 'idle' || agentState === 'done') && (
-        <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
-          <p style={{ fontSize: 36, margin: '0 0 12px' }}>🤖</p>
-          <p style={{ fontSize: 14 }}>
-            {agentState === 'idle'
-              ? 'Configure os filtros e inicie o agente para descobrir leads automaticamente.'
-              : 'Nenhum lead retornado. Tente ajustar os filtros.'}
-          </p>
-        </div>
+      {/* ── MODO APOLLO ───────────────────────────────────────────── */}
+      {mode === 'apollo' && (
+        <>
+          {apolloProgress.total > 0 && (
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                <span>
+                  {apolloState === 'scraping' && (
+                    <><span className="spinner" style={{ display: 'inline-block', width: 11, height: 11, marginRight: 6 }} />Buscando no Apollo…</>
+                  )}
+                  {apolloState === 'paused' && '⏸ Pausado'}
+                  {apolloState === 'done'   && '✓ Concluído'}
+                </span>
+                <span style={{ fontWeight: 600 }}>{apolloProgress.done} / {apolloProgress.total}</span>
+              </div>
+              <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 2,
+                  background: apolloState === 'paused' ? '#f59e0b' : '#6366f1',
+                  width: `${Math.round((apolloProgress.done / apolloProgress.total) * 100)}%`,
+                  transition: 'width 0.4s',
+                }} />
+              </div>
+            </div>
+          )}
+
+          {apolloState === 'error' && apolloErrorMsg && (
+            <div className="card" style={{ marginBottom: 16, border: '1px solid #ef4444', background: 'rgba(239,68,68,0.07)', padding: '12px 16px' }}>
+              <p style={{ fontSize: 13, color: '#ef4444', margin: 0 }}>⚠ {apolloErrorMsg}</p>
+            </div>
+          )}
+
+          {apolloLeads.length > 0 && (
+            <div>
+              <p className="section-label" style={{ marginBottom: 12 }}>
+                {apolloLeads.length} empresa{apolloLeads.length !== 1 ? 's' : ''} encontrada{apolloLeads.length !== 1 ? 's' : ''} via Apollo
+              </p>
+
+              {apolloLeads.map((lead, idx) => (
+                <div
+                  key={`${lead.apollo_url ?? lead.nome}-${idx}`}
+                  className="card fade-in"
+                  style={{ marginBottom: 10, cursor: 'pointer', padding: '14px 18px' }}
+                  onClick={() => setApolloExpandedIdx(apolloExpandedIdx === idx ? null : idx)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, color: 'var(--cream)', fontSize: 14 }}>{lead.nome}</span>
+                        {lead.potencial && (
+                          <span className="badge" style={{
+                            background: potencialColor(lead.potencial) + '22',
+                            color:      potencialColor(lead.potencial),
+                            border:     `1px solid ${potencialColor(lead.potencial)}44`,
+                            fontSize: 11,
+                          }}>
+                            {lead.potencial}
+                          </span>
+                        )}
+                        {lead.score_fit != null && (
+                          <span className="badge" style={{
+                            background: 'rgba(99,102,241,0.12)', color: '#818cf8',
+                            border: '1px solid rgba(99,102,241,0.3)', fontSize: 11,
+                          }}>
+                            Fit {lead.score_fit}/10
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+                        {lead.setor}{lead.cidade ? ` · ${lead.cidade}` : ''}{lead.porte ? ` · ${lead.porte}` : ''}
+                        {lead.funcionarios ? ` · ${lead.funcionarios} func.` : ''}
+                        {lead.website ? ` · ${lead.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}
+                      </div>
+                    </div>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11, flexShrink: 0 }}>
+                      {apolloExpandedIdx === idx ? '▲' : '▼'}
+                    </span>
+                  </div>
+
+                  {apolloExpandedIdx === idx && (
+                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                        <div>
+                          <p className="section-label" style={{ marginBottom: 8 }}>Contato</p>
+                          {lead.email    && <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>✉ {lead.email}</p>}
+                          {lead.telefone && <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>☎ {lead.telefone}</p>}
+                          {lead.emails?.filter(e => e !== lead.email).map(e => (
+                            <p key={e} style={{ fontSize: 12, color: '#4fa3e0', margin: '4px 0' }}>✉ {e}</p>
+                          ))}
+                          {lead.website && (
+                            <a href={lead.website} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#4fa3e0', display: 'block', marginTop: 4 }}>Site ↗</a>
+                          )}
+                          {lead.linkedin_url && (
+                            <a href={lead.linkedin_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#4fa3e0', display: 'block', marginTop: 4 }}>LinkedIn ↗</a>
+                          )}
+                          {lead.apollo_url && (
+                            <a href={lead.apollo_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#818cf8', display: 'block', marginTop: 4 }}>Apollo ↗</a>
+                          )}
+                          {!lead.email && !lead.telefone && !(lead.emails?.length) && (
+                            <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sem dados de contato</p>
+                          )}
+                        </div>
+                        <div>
+                          {lead.justificativa && (
+                            <>
+                              <p className="section-label" style={{ marginBottom: 6 }}>Análise IA</p>
+                              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>{lead.justificativa}</p>
+                            </>
+                          )}
+                          {lead.argumento_abertura && (
+                            <>
+                              <p className="section-label" style={{ marginBottom: 6, marginTop: 12 }}>Argumento de abertura</p>
+                              <p style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.6, margin: 0 }}>&ldquo;{lead.argumento_abertura}&rdquo;</p>
+                            </>
+                          )}
+                        </div>
+                        {(lead.dores_tipicas?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Dores típicas</p>
+                            {lead.dores_tipicas.map((d, i) => <p key={i} style={{ fontSize: 12, color: '#ef4444', margin: '3px 0' }}>! {d}</p>)}
+                          </div>
+                        )}
+                        {(lead.servicos_sugeridos?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Serviços sugeridos</p>
+                            {lead.servicos_sugeridos.map((s, i) => <p key={i} style={{ fontSize: 12, color: 'var(--green-primary)', margin: '3px 0' }}>✓ {s}</p>)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {apolloLeads.length === 0 && (apolloState === 'idle' || apolloState === 'done') && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
+              <p style={{ fontSize: 36, margin: '0 0 12px' }}>🚀</p>
+              <p style={{ fontSize: 14 }}>
+                {apolloState === 'idle'
+                  ? 'Selecione o setor e inicie o agente Apollo para descobrir leads via Apollo.io.'
+                  : 'Nenhum lead retornado. Certifique-se de estar logado no Apollo.io.'}
+              </p>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

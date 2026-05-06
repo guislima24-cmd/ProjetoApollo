@@ -180,3 +180,4 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.runtime.onStartup.addListener(flushQueue)
 
 import './agent-mode.js'
+import './agent-mode-apollo.js'
