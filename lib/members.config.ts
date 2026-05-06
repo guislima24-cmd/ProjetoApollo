@@ -9,7 +9,7 @@
  * ao nome completo da conta Google.
  */
 
-export type MemberRole = 'manager' | 'pre-sales-leader' | 'member'
+export type MemberRole =  'manager' | 'pre-sales-leader' | 'member'
 
 export const ALLOWED_DOMAIN = 'ufabcjr.com.br'
 

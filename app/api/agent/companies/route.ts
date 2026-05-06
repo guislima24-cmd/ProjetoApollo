@@ -20,7 +20,8 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Não autenticado' }, { status: 401 })
   }
 
-  const token = process.env.BRASIL_IO_TOKEN
+  // Strip BOM (U+FEFF) that PowerShell can prepend when setting env vars
+  const token = (process.env.BRASIL_IO_TOKEN ?? '').replace(/^﻿/, '').trim()
   if (!token) {
     return Response.json({ ok: false, error: 'BRASIL_IO_TOKEN não configurado.' }, { status: 500 })
   }
@@ -71,6 +72,7 @@ export async function GET(req: NextRequest) {
 
       if (!res.ok) {
         console.error(`[agent/companies] ${res.status} para "${municipio}"`)
+        lastError = `Brasil.io retornou ${res.status} para ${municipio}`
         continue
       }
 
