@@ -448,15 +448,21 @@ async function runAgentLoop() {
     const perRegiao = Math.ceil(limite / Math.max(regioes.length, 1))
     await agentSet({ state: 'running', progress: { done: 0, total: limite } })
 
+    // Set global de URLs vistas — persiste entre regiões para evitar duplicatas
+    const seenUrls  = new Set(existingResults.map(r => r.linkedin_url).filter(Boolean))
+    const seenNames = new Set(existingResults.map(r => r.nome?.toLowerCase()).filter(Boolean))
+
     for (const regiao of regioes) {
       const { state } = await agentGet(['state'])
       if (state === 'idle' || state === 'paused') break
       if (existingResults.length >= limite) break
 
       // Fase 1: descoberta de empresas no LinkedIn
+      // Pede mais do que o necessário para compensar duplicatas que serão filtradas
+      const fetchTarget = Math.min(perRegiao * 2, 50)
       let searchResults
       try {
-        searchResults = await searchLinkedInCompanies(setor, regiao, perRegiao)
+        searchResults = await searchLinkedInCompanies(setor, regiao, fetchTarget)
       } catch (err) {
         if (err?.blocked) {
           await agentSet({ state: 'paused', pauseReason: err.reason })
@@ -466,11 +472,19 @@ async function runAgentLoop() {
         continue
       }
 
-      // Fase 2: processar cada empresa descoberta
+      // Fase 2: processar cada empresa descoberta (pulando duplicatas)
       for (const entry of searchResults) {
         const { state: cur } = await agentGet(['state'])
         if (cur === 'idle' || cur === 'paused') return
         if (existingResults.length >= limite) break
+
+        // Deduplicação global por URL e por nome
+        const entryUrl  = entry.url?.split('?')[0].replace(/\/$/, '') ?? null
+        const entryName = entry.name?.toLowerCase() ?? null
+        if (entryUrl  && seenUrls.has(entryUrl))   continue
+        if (entryName && seenNames.has(entryName))  continue
+        if (entryUrl)  seenUrls.add(entryUrl)
+        if (entryName) seenNames.add(entryName)
 
         const linkedinData = await processLinkedInCompany(entry, setor)
 
