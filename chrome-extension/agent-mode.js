@@ -311,15 +311,54 @@ async function processLinkedInCompany(entry, setor) {
   }
 }
 
-// ── Busca de empresas na página de resultados do LinkedIn ────────────────────
+// ── Mapeamento de cidades para LinkedIn geoUrn (parâmetro do filtro de localização) ──
+// Estes IDs são os mesmos que o LinkedIn usa internamente quando você clica no filtro "Localização".
+// São Paulo estado (102042721) cobre toda a Grande São Paulo, incluindo ABC Paulista.
+const LINKEDIN_GEO_URN = {
+  'são paulo':             '105490917',  // cidade de São Paulo
+  'sao paulo':             '105490917',
+  'são paulo capital':     '105490917',
+  'guarulhos':             '100364837',
+  'campinas':              '101896426',
+  'barueri':               '100364837',  // São Paulo área
+  'osasco':                '100364837',  // São Paulo área
+  // ABC Paulista — usa geoUrn do estado de SP pois LinkedIn não tem IDs individuais para essas cidades
+  'são bernardo do campo': '102042721',
+  'sao bernardo do campo': '102042721',
+  'são bernardo':          '102042721',
+  'santo andré':           '102042721',
+  'santo andre':           '102042721',
+  'são caetano do sul':    '102042721',
+  'sao caetano do sul':    '102042721',
+  'são caetano':           '102042721',
+  'diadema':               '102042721',
+  'mauá':                  '102042721',
+  'maua':                  '102042721',
+  'ribeirão pires':        '102042721',
+  'ribeirao pires':        '102042721',
+  'rio grande da serra':   '102042721',
+}
+
+function getGeoUrn(regiao) {
+  const key = regiao.toLowerCase().trim()
+  return LINKEDIN_GEO_URN[key] ?? '106057199'  // fallback: Brasil inteiro
+}
+
+// ── Busca de empresas via filtros nativos do LinkedIn ────────────────────────
 
 async function searchLinkedInCompanies(setor, regiao, maxResults) {
-  const query = encodeURIComponent(`${setor} ${regiao}`)
+  const geoUrn  = getGeoUrn(regiao)
+  const keyword = encodeURIComponent(setor)
+  // geoUrn precisa ser passado como array JSON URL-encoded: ["ID"]
+  const geo     = encodeURIComponent(`["${geoUrn}"]`)
+
   const companies = []
   let page = 1
 
   while (companies.length < maxResults && page <= 5) {
-    const url = `https://www.linkedin.com/search/results/companies/?keywords=${query}&page=${page}&origin=GLOBAL_SEARCH_HEADER`
+    // Usa os filtros nativos do LinkedIn: keyword = setor, geoUrn = localização
+    // Igual a pesquisar no LinkedIn e clicar no filtro "Localização"
+    const url = `https://www.linkedin.com/search/results/companies/?keywords=${keyword}&geoUrn=${geo}&origin=FACETED_SEARCH&page=${page}`
     let tabId = null
 
     try {
