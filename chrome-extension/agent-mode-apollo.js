@@ -424,27 +424,36 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === 'APOLLO_SCRAPE_QUEUE') {
+    console.log('[apollo] APOLLO_SCRAPE_QUEUE recebido', message.searchParams)
     ;(async () => {
-      const { searchParams } = message
-      if (!searchParams?.setor) { sendResponse({ ok: false, error: 'setor obrigatório' }); return }
+      try {
+        const { searchParams } = message
+        if (!searchParams?.setor) {
+          sendResponse({ ok: false, error: 'setor obrigatório' })
+          return
+        }
 
-      await apolloClear()
-      await apolloSet({
-        state:        'scraping',
-        searchParams,
-        results:      [],
-        progress:     { done: 0, total: searchParams.limite ?? 10 },
-        pauseReason:  null,
-        errorMessage: null,
-      })
+        await apolloClear()
+        await apolloSet({
+          state:        'scraping',
+          searchParams,
+          results:      [],
+          progress:     { done: 0, total: searchParams.limite ?? 10 },
+          pauseReason:  null,
+          errorMessage: null,
+        })
 
-      sendResponse({ ok: true, target: searchParams.limite ?? 10 })
+        console.log('[apollo] storage inicializado, enviando ok')
+        sendResponse({ ok: true, target: searchParams.limite ?? 10 })
 
-      // Roda em background
-      runApolloLoop().catch(async err => {
-        console.error('[apollo] loop error:', err)
-        await apolloSet({ state: 'error', errorMessage: String(err?.message ?? err) })
-      })
+        runApolloLoop().catch(async err => {
+          console.error('[apollo] loop error:', err)
+          await apolloSet({ state: 'error', errorMessage: String(err?.message ?? err) })
+        })
+      } catch (err) {
+        console.error('[apollo] APOLLO_SCRAPE_QUEUE erro:', err)
+        sendResponse({ ok: false, error: String(err?.message ?? err) })
+      }
     })()
     return true
   }
