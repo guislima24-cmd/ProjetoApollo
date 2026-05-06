@@ -923,9 +923,9 @@ export interface DiscoveredLeadRecord {
 const AGENT_TAB = 'Leads Agente'
 const AGENT_HEADERS = [
   'Data', 'Empresa', 'CNPJ', 'Setor', 'Porte', 'Cidade',
-  'Email', 'Telefone', 'LinkedIn URL', 'Seguidores', 'Emails Encontrados',
+  'Email', 'Telefone', 'LinkedIn Empresa', 'Decisores', 'Emails Encontrados',
   'Potencial IA', 'Justificativa', 'Dores Típicas', 'Serviços Sugeridos',
-  'Argumento', 'Status', 'Membro',
+  'Argumento de Abertura', 'Status', 'Membro',
 ]
 
 let agentTabEnsured = false
@@ -941,26 +941,27 @@ async function ensureAgentTab(): Promise<void> {
       spreadsheetId,
       requestBody: { requests: [{ addSheet: { properties: { title: AGENT_TAB } } }] },
     })
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `'${AGENT_TAB}'!A1:R1`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [AGENT_HEADERS] },
-    })
   }
+  // Sempre atualiza os cabeçalhos para refletir o schema atual
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${AGENT_TAB}'!A1:R1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [AGENT_HEADERS] },
+  }))
   agentTabEnsured = true
 }
 
 export async function saveAgentLead(params: {
   empresa:             string
-  cnpj:                string
+  cnpj?:               string | null
   setor:               string
-  porte:               string
+  porte?:              string | null
   cidade:              string
   email?:              string | null
   telefone?:           string | null
   linkedin_url?:       string | null
-  followers?:          string | null
+  decision_makers?:    { name: string; role: string; profile_url: string | null }[]
   potencial?:          string | null
   justificativa?:      string | null
   dores_tipicas?:      string[]
@@ -975,17 +976,22 @@ export async function saveAgentLead(params: {
   const sheets = getSheets()
 
   const now = new Date().toLocaleDateString('pt-BR')
+
+  const decisoresStr = (params.decision_makers ?? [])
+    .map(dm => `${dm.name} (${dm.role})${dm.profile_url ? ' — ' + dm.profile_url.replace('https://', '') : ''}`)
+    .join('\n')
+
   const row = [
     now,
     sanitize(params.empresa),
-    sanitize(params.cnpj),
+    sanitize(params.cnpj               ?? ''),
     sanitize(params.setor),
-    sanitize(params.porte),
+    sanitize(params.porte              ?? ''),
     sanitize(params.cidade),
     sanitize(params.email              ?? ''),
     sanitize(params.telefone           ?? ''),
     sanitize(params.linkedin_url       ?? ''),
-    sanitize(params.followers          ?? ''),
+    decisoresStr,
     sanitize((params.emails_encontrados ?? []).join('; ')),
     sanitize(params.potencial          ?? ''),
     sanitize(params.justificativa      ?? ''),
@@ -996,39 +1002,39 @@ export async function saveAgentLead(params: {
     sanitize(params.memberTab),
   ]
 
-  // Deduplicação por CNPJ (coluna C)
-  const colRes = await withRetry(() => sheets.spreadsheets.values.get({
+  // Deduplicação: por CNPJ (col C) se disponível; por LinkedIn URL (col I) como fallback
+  const batchRes = await withRetry(() => sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    range: `'${AGENT_TAB}'!C:C`,
+    ranges: [`'${AGENT_TAB}'!C:C`, `'${AGENT_TAB}'!I:I`],
   }))
-  const colValues = colRes.data.values ?? []
-  const cnpjDigits = params.cnpj.replace(/\D/g, '')
+  const cnpjValues = batchRes.data.valueRanges?.[0]?.values ?? []
+  const urlValues  = batchRes.data.valueRanges?.[1]?.values ?? []
+
+  const cnpjDigits  = (params.cnpj ?? '').replace(/\D/g, '')
+  const linkedinUrl = (params.linkedin_url ?? '').trim()
 
   let existingRow = -1
-  for (let i = 1; i < colValues.length; i++) {
-    if ((colValues[i]?.[0] ?? '').replace(/\D/g, '') === cnpjDigits) {
-      existingRow = i + 1
-      break
-    }
+  for (let i = 1; i < Math.max(cnpjValues.length, urlValues.length); i++) {
+    const rowCnpj = (cnpjValues[i]?.[0] ?? '').replace(/\D/g, '')
+    const rowUrl  = (urlValues[i]?.[0]  ?? '').trim()
+    if (cnpjDigits && rowCnpj === cnpjDigits) { existingRow = i + 1; break }
+    if (!cnpjDigits && linkedinUrl && rowUrl === linkedinUrl) { existingRow = i + 1; break }
   }
 
   if (existingRow > 1) {
     await withRetry(() => sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `'${AGENT_TAB}'!A${existingRow}:R${existingRow}`,
-      valueInputOption: 'RAW',
+      valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     }))
   } else {
-    let lastDataRow = 1
-    for (let i = colValues.length - 1; i >= 1; i--) {
-      if (colValues[i]?.[0]) { lastDataRow = i + 1; break }
-    }
-    const targetRow = Math.max(2, lastDataRow + 1)
+    const lastRow = Math.max(cnpjValues.length, urlValues.length, 1)
+    const targetRow = Math.max(2, lastRow + 1)
     await withRetry(() => sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `'${AGENT_TAB}'!A${targetRow}:R${targetRow}`,
-      valueInputOption: 'RAW',
+      valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     }))
   }

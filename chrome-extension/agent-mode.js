@@ -2,10 +2,16 @@
 // STANDALONE: não importa nada do background.js existente.
 // Prefixo "agent_" em todas as chaves de storage para não colidir com o sistema existente.
 
-const AGENT_VERSION = 1
-const MAX_COMPANIES = 20
-const MIN_DELAY_MS  = 3000
-const MAX_DELAY_MS  = 6000
+const AGENT_VERSION = 2
+const MAX_COMPANIES = 25
+const MIN_DELAY_MS  = 4000
+const MAX_DELAY_MS  = 8000
+
+const DECISION_MAKER_TITLES = [
+  'gerente', 'diretor', 'coordenador', 'manager', 'head',
+  'ceo', 'cto', 'cfo', 'coo', 'fundador', 'sócio', 'socio',
+  'vp ', 'vice-presidente', 'presidente', 'superintendente',
+]
 
 function randomDelay() {
   return MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS)
@@ -48,9 +54,9 @@ async function agentClear() {
   if (agentKeys.length) await chrome.storage.local.remove(agentKeys)
 }
 
-// ── Scraping do LinkedIn ─────────────────────────────────────────────────────
+// ── Helpers de tab ───────────────────────────────────────────────────────────
 
-async function waitForTabComplete(tabId, timeoutMs = 20000) {
+async function waitForTabComplete(tabId, timeoutMs = 25000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
@@ -64,97 +70,276 @@ async function waitForTabComplete(tabId, timeoutMs = 20000) {
   return false
 }
 
-async function scrapeLinkedInCompany(companyName, cidade) {
-  const query = encodeURIComponent(`${companyName} ${cidade ?? ''}`.trim())
-  const searchUrl = `https://www.linkedin.com/search/results/companies/?keywords=${query}`
+async function openTab(url) {
+  const tab = await chrome.tabs.create({ url, active: false })
+  const loaded = await waitForTabComplete(tab.id)
+  if (!loaded) throw new Error('Timeout ao carregar: ' + url)
+  await new Promise(r => setTimeout(r, 2500))
+  return tab.id
+}
 
-  let tabId = null
-  try {
-    const tab = await chrome.tabs.create({ url: searchUrl, active: false })
-    tabId = tab.id
+async function closeTab(tabId) {
+  if (tabId !== null) chrome.tabs.remove(tabId).catch(() => {})
+}
 
-    const loaded = await waitForTabComplete(tabId)
-    if (!loaded) return { error: 'timeout', companyName }
+async function checkLinkedInBlock(tabId) {
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const url = window.location.href
+      if (url.includes('/login') || url.includes('/checkpoint') || url.includes('/authwall')) {
+        return { blocked: true, reason: 'login' }
+      }
+      if (
+        document.querySelector('.captcha-internal') ||
+        document.querySelector('#captcha-challenge') ||
+        document.title.toLowerCase().includes('security verification')
+      ) {
+        return { blocked: true, reason: 'captcha' }
+      }
+      return { blocked: false }
+    },
+  })
+  return res?.result ?? { blocked: false }
+}
 
-    // Aguarda JS renderizar
-    await new Promise(r => setTimeout(r, 2000))
+// ── Extração dos resultados de busca de empresas ─────────────────────────────
 
-    // Verifica bloqueio (login / captcha / authwall)
-    const [checkResult] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        const url = window.location.href
-        if (url.includes('/login') || url.includes('/checkpoint') || url.includes('/authwall')) {
-          return { blocked: true, reason: 'login' }
-        }
-        if (
-          document.querySelector('.captcha-internal') ||
-          document.querySelector('#captcha-challenge') ||
-          document.title.toLowerCase().includes('security verification')
-        ) {
-          return { blocked: true, reason: 'captcha' }
-        }
-        return { blocked: false }
-      },
-    })
-
-    if (checkResult?.result?.blocked) {
-      return { error: checkResult.result.reason, companyName }
-    }
-
-    // Extrai o primeiro resultado da busca de empresas
-    const [scrapeResult] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        const items = document.querySelectorAll(
-          '.entity-result__item, [data-view-name="search-entity-result-universal-template"]'
-        )
-        if (!items.length) return null
-
-        const first = items[0]
-
-        const nameEl = first.querySelector(
-          '.entity-result__title-text a span[aria-hidden="true"], .entity-result__title-text'
+async function extractSearchResults(tabId) {
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const items = document.querySelectorAll(
+        'li.reusable-search__result-container, .entity-result__item, [data-view-name="search-entity-result-universal-template"]'
+      )
+      const results = []
+      for (const item of items) {
+        const nameEl = item.querySelector(
+          '.entity-result__title-text a span[aria-hidden="true"], .entity-result__title-text a'
         )
         const name = nameEl?.textContent?.trim() ?? null
+        if (!name) continue
 
-        const urlEl = first.querySelector('.entity-result__title-text a')
-        const url = urlEl?.href?.split('?')[0] ?? null
+        const linkEl = item.querySelector(
+          '.entity-result__title-text a[href*="/company/"], .entity-result__title-text a'
+        )
+        const rawUrl = linkEl?.href ?? null
+        const url = rawUrl ? rawUrl.split('?')[0].replace(/\/$/, '') : null
 
-        const subtitleEl = first.querySelector('.entity-result__primary-subtitle')
-        const industry = subtitleEl?.textContent?.trim() ?? null
+        const industryEl = item.querySelector('.entity-result__primary-subtitle')
+        const industry = industryEl?.textContent?.trim() ?? null
 
-        const secondaryEl = first.querySelector('.entity-result__secondary-subtitle')
-        const location = secondaryEl?.textContent?.trim() ?? null
+        const locationEl = item.querySelector('.entity-result__secondary-subtitle')
+        const location = locationEl?.textContent?.trim() ?? null
 
-        const summaryEl = first.querySelector('.entity-result__summary')
-        const summary = summaryEl?.textContent?.trim() ?? null
+        const descEl = item.querySelector('.entity-result__summary')
+        const description = descEl?.textContent?.trim() ?? null
 
-        const followersEl = first.querySelector('.entity-result__insights')
+        const followersEl = item.querySelector('.entity-result__insights')
         const followers = followersEl?.textContent?.trim() ?? null
 
-        return { name, url, industry, location, summary, followers }
-      },
-    })
+        results.push({ name, url, industry, location, description, followers })
+      }
+      return results
+    },
+  })
+  return res?.result ?? []
+}
+
+// ── Extração de detalhes da página da empresa ────────────────────────────────
+
+async function extractCompanyPageDetails(tabId) {
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const aboutEl = document.querySelector(
+        '.org-about-us-organization-description__text, .org-about-module__description, section.artdeco-card p.break-words'
+      )
+      const description = aboutEl?.textContent?.trim() ?? null
+
+      const sizeEl = document.querySelector(
+        'a[href*="/employees/"] span, .org-about-company-module__company-size'
+      )
+      const employeesCount = sizeEl?.textContent?.trim() ?? null
+
+      const postEls = document.querySelectorAll(
+        '.feed-shared-update-v2__description, .update-components-text, .org-content-update__body'
+      )
+      const recentPosts = Array.from(postEls)
+        .slice(0, 3)
+        .map(el => el.textContent?.trim()?.slice(0, 200))
+        .filter(Boolean)
+
+      return { description, employeesCount, recentPosts }
+    },
+  })
+  return res?.result ?? {}
+}
+
+// ── Extração de decisores da aba /people/ ───────────────────────────────────
+
+async function extractDecisionMakers(tabId, titles) {
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (decisionTitles) => {
+      const selectors = [
+        '.org-people-profiles-module__profile-list li',
+        '.artdeco-entity-lockup',
+        '.member-analytics-profile-photo + div',
+      ]
+      let cards = []
+      for (const sel of selectors) {
+        cards = Array.from(document.querySelectorAll(sel))
+        if (cards.length > 0) break
+      }
+
+      const people = []
+      for (const card of cards) {
+        if (people.length >= 5) break
+
+        const nameEl = card.querySelector(
+          '.org-people-profile-card__profile-title, .artdeco-entity-lockup__title'
+        )
+        const name = nameEl?.textContent?.trim() ?? null
+        if (!name || name.length < 2) continue
+
+        const roleEl = card.querySelector(
+          '.org-people-profile-card__profile-position, .artdeco-entity-lockup__subtitle'
+        )
+        const role = roleEl?.textContent?.trim() ?? ''
+
+        const linkEl = card.querySelector('a[href*="/in/"]')
+        const profileUrl = linkEl?.href?.split('?')[0] ?? null
+
+        const roleLower = role.toLowerCase()
+        const isDecisionMaker = decisionTitles.some(t => roleLower.includes(t))
+        if (!isDecisionMaker) continue
+
+        people.push({ name, role, profile_url: profileUrl })
+      }
+      return people
+    },
+    args: [titles],
+  })
+  return res?.result ?? []
+}
+
+// ── Processa uma empresa do LinkedIn (detalhe + decisores) ──────────────────
+
+async function processLinkedInCompany(entry, setor) {
+  if (!entry.url) {
+    return {
+      company_name:    entry.name,
+      linkedin_url:    null,
+      sector:          entry.industry ?? setor,
+      employees_count: entry.followers ?? null,
+      location:        entry.location ?? '',
+      description:     entry.description ?? null,
+      recent_posts:    [],
+      decision_makers: [],
+      error:           'no_url',
+    }
+  }
+
+  let detailTabId = null
+  let peopleTabId = null
+
+  try {
+    // Abre a página da empresa
+    detailTabId = await openTab(entry.url)
+
+    const blockCheck = await checkLinkedInBlock(detailTabId)
+    if (blockCheck.blocked) {
+      return { error: blockCheck.reason, company_name: entry.name }
+    }
+
+    const details = await extractCompanyPageDetails(detailTabId)
+    await closeTab(detailTabId)
+    detailTabId = null
+
+    // Extrai o slug da URL para montar /people/
+    const slug = entry.url.replace(/\/$/, '').split('/company/')[1] ?? ''
+    const peopleUrl = `https://www.linkedin.com/company/${slug}/people/`
+
+    let decisionMakers = []
+    try {
+      peopleTabId = await openTab(peopleUrl)
+      const peopleBlock = await checkLinkedInBlock(peopleTabId)
+      if (!peopleBlock.blocked) {
+        decisionMakers = await extractDecisionMakers(peopleTabId, DECISION_MAKER_TITLES)
+      }
+    } catch {
+      // página /people/ pode falhar — não é fatal
+    } finally {
+      if (peopleTabId !== null) { await closeTab(peopleTabId); peopleTabId = null }
+    }
 
     return {
-      companyName,
-      linkedin_url: scrapeResult?.result?.url      ?? null,
-      industry:     scrapeResult?.result?.industry  ?? null,
-      location:     scrapeResult?.result?.location  ?? null,
-      summary:      scrapeResult?.result?.summary   ?? null,
-      followers:    scrapeResult?.result?.followers ?? null,
+      company_name:    entry.name,
+      linkedin_url:    entry.url,
+      sector:          entry.industry ?? setor,
+      employees_count: entry.followers ?? details.employeesCount ?? null,
+      location:        entry.location ?? '',
+      description:     details.description ?? entry.description ?? null,
+      recent_posts:    details.recentPosts ?? [],
+      decision_makers: decisionMakers,
     }
   } catch (err) {
-    return { error: err.message, companyName }
+    return { error: err.message, company_name: entry.name }
   } finally {
-    if (tabId !== null) chrome.tabs.remove(tabId).catch(() => {})
+    if (detailTabId !== null) await closeTab(detailTabId)
+    if (peopleTabId !== null) await closeTab(peopleTabId)
   }
 }
 
-// ── Chama /api/agent/process para análise IA + email + Sheets ───────────────
+// ── Busca de empresas na página de resultados do LinkedIn ────────────────────
 
-async function processWithApi(company, scraped) {
+async function searchLinkedInCompanies(setor, regiao, maxResults) {
+  const query = encodeURIComponent(`${setor} ${regiao}`)
+  const companies = []
+  let page = 1
+
+  while (companies.length < maxResults && page <= 5) {
+    const url = `https://www.linkedin.com/search/results/companies/?keywords=${query}&page=${page}&origin=GLOBAL_SEARCH_HEADER`
+    let tabId = null
+
+    try {
+      tabId = await openTab(url)
+
+      const blockCheck = await checkLinkedInBlock(tabId)
+      if (blockCheck.blocked) {
+        const err = new Error(blockCheck.reason)
+        err.blocked = true
+        err.reason  = blockCheck.reason
+        throw err
+      }
+
+      const results = await extractSearchResults(tabId)
+      if (!results.length) break
+
+      for (const r of results) {
+        if (companies.length >= maxResults) break
+        if (!r.name) continue
+        if (r.url && companies.some(c => c.url === r.url)) continue
+        companies.push(r)
+      }
+
+      page++
+    } finally {
+      if (tabId !== null) await closeTab(tabId)
+    }
+
+    if (companies.length < maxResults && page <= 5) {
+      await new Promise(r => setTimeout(r, 2000))
+    }
+  }
+
+  return companies
+}
+
+// ── Chama /api/agent/process para enriquecimento + IA + Sheets ──────────────
+
+async function processWithApi(linkedinData, setor, portes) {
   try {
     const [token, apiBase] = await Promise.all([agentGetSessionToken(), agentGetApiBase()])
     const headers = { 'Content-Type': 'application/json' }
@@ -164,16 +349,16 @@ async function processWithApi(company, scraped) {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        nome:         company.nome,
-        cnpj:         company.cnpj,
-        setor:        company.setor,
-        porte:        company.porte,
-        cidade:       company.cidade,
-        email:        company.email,
-        telefone:     company.telefone,
-        linkedin_url: scraped.linkedin_url ?? null,
-        followers:    scraped.followers    ?? null,
-        industry:     scraped.industry     ?? null,
+        company_name:    linkedinData.company_name,
+        linkedin_url:    linkedinData.linkedin_url,
+        sector:          linkedinData.sector,
+        employees_count: linkedinData.employees_count,
+        location:        linkedinData.location,
+        description:     linkedinData.description,
+        recent_posts:    linkedinData.recent_posts    ?? [],
+        decision_makers: linkedinData.decision_makers ?? [],
+        setor_filtro:    setor,
+        portes:          portes ?? [],
       }),
     })
 
@@ -193,59 +378,87 @@ async function runAgentLoop() {
   agentRunning = true
 
   try {
-    const { queue, results } = await agentGet(['queue', 'results'])
-    const companies      = queue ?? []
+    const { searchParams, results } = await agentGet(['searchParams', 'results'])
+    const { setor, regioes, limite, portes } = searchParams ?? {}
     const existingResults = Array.isArray(results) ? results : []
 
-    await agentSet({ state: 'running', progress: { done: 0, total: companies.length } })
+    if (!setor || !regioes?.length) {
+      await agentSet({ state: 'error', errorMessage: 'Parâmetros de busca ausentes.' })
+      return
+    }
 
-    for (let i = 0; i < companies.length; i++) {
-      // Verifica se foi pausado ou cancelado
+    const perRegiao = Math.ceil(limite / Math.max(regioes.length, 1))
+    await agentSet({ state: 'running', progress: { done: 0, total: limite } })
+
+    for (const regiao of regioes) {
       const { state } = await agentGet(['state'])
       if (state === 'idle' || state === 'paused') break
+      if (existingResults.length >= limite) break
 
-      const company = companies[i]
-      const scraped = await scrapeLinkedInCompany(company.nome, company.cidade)
-
-      // Bloquio de login/captcha → para o agente
-      if (scraped?.error === 'login' || scraped?.error === 'captcha') {
-        await agentSet({ state: 'paused', pauseReason: scraped.error })
-        break
+      // Fase 1: descoberta de empresas no LinkedIn
+      let searchResults
+      try {
+        searchResults = await searchLinkedInCompanies(setor, regiao, perRegiao)
+      } catch (err) {
+        if (err?.blocked) {
+          await agentSet({ state: 'paused', pauseReason: err.reason })
+          return
+        }
+        console.error('[agent-mode] Busca falhou para', regiao, ':', err)
+        continue
       }
 
-      // Análise IA + email + Sheets (via API)
-      const processed = await processWithApi(company, scraped ?? {})
+      // Fase 2: processar cada empresa descoberta
+      for (const entry of searchResults) {
+        const { state: cur } = await agentGet(['state'])
+        if (cur === 'idle' || cur === 'paused') return
+        if (existingResults.length >= limite) break
 
-      const result = {
-        ...company,
-        linkedin_url:       scraped?.linkedin_url ?? null,
-        industry:           scraped?.industry     ?? null,
-        followers:          scraped?.followers    ?? null,
-        potencial:          processed?.analysis?.potencial          ?? null,
-        justificativa:      processed?.analysis?.justificativa      ?? null,
-        dores_tipicas:      processed?.analysis?.dores_tipicas      ?? [],
-        servicos_sugeridos: processed?.analysis?.servicos_sugeridos ?? [],
-        argumento_abertura: processed?.analysis?.argumento_abertura ?? null,
-        emails:             (processed?.emails ?? []).map(e => e.email),
-        scrapedAt:          Date.now(),
-        ok:                 !scraped?.error,
-      }
+        const linkedinData = await processLinkedInCompany(entry, setor)
 
-      existingResults.push(result)
-      await agentSet({
-        results:  existingResults,
-        progress: { done: i + 1, total: companies.length },
-      })
+        if (linkedinData?.error === 'login' || linkedinData?.error === 'captcha') {
+          await agentSet({ state: 'paused', pauseReason: linkedinData.error })
+          return
+        }
 
-      if (i < companies.length - 1) {
-        await new Promise(r => setTimeout(r, randomDelay()))
+        // Fase 3: enriquece com Brasil.io + IA + salva no Sheets
+        const processed = await processWithApi(linkedinData, setor, portes ?? [])
+
+        const result = {
+          nome:               linkedinData.company_name,
+          cnpj:               processed?.cnpj               ?? null,
+          setor:              linkedinData.sector            ?? setor,
+          porte:              processed?.porte               ?? null,
+          cidade:             linkedinData.location          ?? regiao,
+          email:              processed?.email               ?? null,
+          telefone:           processed?.telefone            ?? null,
+          linkedin_url:       linkedinData.linkedin_url      ?? null,
+          employees_count:    linkedinData.employees_count   ?? null,
+          decision_makers:    linkedinData.decision_makers   ?? [],
+          potencial:          processed?.analysis?.potencial          ?? null,
+          justificativa:      processed?.analysis?.justificativa      ?? null,
+          dores_tipicas:      processed?.analysis?.dores_tipicas      ?? [],
+          servicos_sugeridos: processed?.analysis?.servicos_sugeridos ?? [],
+          argumento_abertura: processed?.analysis?.argumento_abertura ?? null,
+          emails:             (processed?.emails ?? []).map(e => e.email),
+          scrapedAt:          Date.now(),
+          ok:                 !linkedinData.error,
+        }
+
+        existingResults.push(result)
+        await agentSet({
+          results:  existingResults,
+          progress: { done: existingResults.length, total: limite },
+        })
+
+        if (existingResults.length < limite) {
+          await new Promise(r => setTimeout(r, randomDelay()))
+        }
       }
     }
 
-    const { state: currentState } = await agentGet(['state'])
-    if (currentState === 'running') {
-      await agentSet({ state: 'done' })
-    }
+    const { state: finalState } = await agentGet(['state'])
+    if (finalState === 'running') await agentSet({ state: 'done' })
   } catch (err) {
     console.error('[agent-mode] Erro no loop:', err)
     await agentSet({ state: 'error', errorMessage: err.message })
@@ -262,23 +475,30 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
   ;(async () => {
     try {
       switch (message.type) {
+
         case 'AGENT_PING':
           sendResponse({ ok: true, version: AGENT_VERSION })
           break
 
         case 'AGENT_SCRAPE_QUEUE': {
-          const companies = (message.companies ?? []).slice(0, MAX_COMPANIES)
+          // Recebe { searchParams: { setor, regioes, limite, portes } }
+          const { setor, regioes, limite, portes } = message.searchParams ?? {}
+          if (!setor || !regioes?.length) {
+            sendResponse({ ok: false, error: 'searchParams.setor e searchParams.regioes são obrigatórios' })
+            break
+          }
+          const limiteClamped = Math.min(Number(limite ?? 10), MAX_COMPANIES)
           await agentSet({
-            queue:    companies,
-            results:  [],
-            state:    'running',
-            cursor:   0,
-            progress: { done: 0, total: companies.length },
+            searchParams: { setor, regioes, limite: limiteClamped, portes: portes ?? [] },
+            results:      [],
+            state:        'running',
+            cursor:       0,
+            progress:     { done: 0, total: limiteClamped },
             pauseReason:  null,
             errorMessage: null,
           })
-          runAgentLoop()   // inicia sem bloquear
-          sendResponse({ ok: true, queued: companies.length })
+          runAgentLoop()
+          sendResponse({ ok: true, target: limiteClamped })
           break
         }
 
@@ -288,13 +508,11 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
           const allResults = Array.isArray(results) ? results : []
           const fromIndex  = cursor ?? 0
           const newItems   = allResults.slice(fromIndex)
-          if (newItems.length) {
-            await agentSet({ cursor: allResults.length })
-          }
+          if (newItems.length) await agentSet({ cursor: allResults.length })
           sendResponse({
             ok:       true,
             results:  newItems,
-            state:    state   ?? 'idle',
+            state:    state    ?? 'idle',
             progress: progress ?? { done: 0, total: 0 },
             pauseReason,
             errorMessage,
@@ -331,5 +549,5 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
     }
   })()
 
-  return true  // mantém canal aberto para sendResponse assíncrono
+  return true
 })

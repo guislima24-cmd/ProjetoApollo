@@ -4,18 +4,25 @@ import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 
-type AgentState = 'idle' | 'loading_companies' | 'scraping' | 'paused' | 'done' | 'error'
+type AgentState = 'idle' | 'scraping' | 'paused' | 'done' | 'error'
+
+interface DecisionMaker {
+  name:        string
+  role:        string
+  profile_url: string | null
+}
 
 interface ProcessedLead {
   nome:               string
-  cnpj:               string
+  cnpj:               string | null
   setor:              string
-  porte:              string
+  porte:              string | null
   cidade:             string
   email:              string | null
   telefone:           string | null
   linkedin_url:       string | null
-  followers:          string | null
+  employees_count:    string | null
+  decision_makers:    DecisionMaker[]
   potencial:          string | null
   justificativa:      string | null
   dores_tipicas:      string[]
@@ -140,33 +147,20 @@ export default function AgentePage() {
     setErrorMsg(null)
     setPauseReason(null)
     setExpandedIdx(null)
-    setAgentState('loading_companies')
+    setAgentState('scraping')
 
-    const params = new URLSearchParams()
-    params.set('setor', setor)
-    params.set('limite', String(limite))
-    regioes.forEach(r => params.append('regioes', r))
-    portes.forEach(p => params.append('portes', p))
-
-    const compRes  = await fetch(`/api/agent/companies?${params.toString()}`)
-    const compData = await compRes.json()
-
-    if (!compData.ok || !compData.companies?.length) {
-      setErrorMsg(compData.error ?? 'Nenhuma empresa encontrada com esses filtros.')
-      setAgentState('error')
-      return
-    }
-
-    const queueRes = await sendToExt({ type: 'AGENT_SCRAPE_QUEUE', companies: compData.companies })
+    const queueRes = await sendToExt({
+      type: 'AGENT_SCRAPE_QUEUE',
+      searchParams: { setor, regioes, limite, portes },
+    })
 
     if (!queueRes?.ok) {
-      setErrorMsg('Erro ao enviar fila para a extensão. Verifique se ela está ativa.')
+      setErrorMsg(queueRes?.error ?? 'Erro ao iniciar o agente. Verifique se a extensão está ativa.')
       setAgentState('error')
       return
     }
 
-    setProgress({ done: 0, total: compData.companies.length })
-    setAgentState('scraping')
+    setProgress({ done: 0, total: queueRes.target ?? limite })
     startPolling()
   }
 
@@ -208,7 +202,7 @@ export default function AgentePage() {
           ✦ Agente Autônomo
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 6, lineHeight: 1.6 }}>
-          Descobre empresas via Brasil.io e enriquece com LinkedIn automaticamente.
+          Descobre empresas diretamente no LinkedIn por setor e região, extrai decisores e enriquece com CNPJ automaticamente.
           Requer a extensão ProspectAI instalada e login no LinkedIn.
         </p>
       </div>
@@ -349,13 +343,6 @@ export default function AgentePage() {
             </button>
           )}
 
-          {agentState === 'loading_companies' && (
-            <button className="btn-primary" disabled style={{ opacity: 0.5, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="spinner" style={{ width: 14, height: 14 }} />
-              Buscando empresas…
-            </button>
-          )}
-
           {agentState === 'scraping' && (
             <button className="btn-secondary" onClick={handlePause}>⏸ Pausar</button>
           )}
@@ -426,7 +413,7 @@ export default function AgentePage() {
 
           {leads.map((lead, idx) => (
             <div
-              key={`${lead.cnpj}-${idx}`}
+              key={`${lead.linkedin_url ?? lead.nome}-${idx}`}
               className="card fade-in"
               style={{ marginBottom: 10, cursor: 'pointer', padding: '14px 18px' }}
               onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}
@@ -457,7 +444,8 @@ export default function AgentePage() {
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
                     {lead.setor}{lead.cidade ? ` · ${lead.cidade}` : ''}{lead.porte ? ` · ${lead.porte}` : ''}
-                    {lead.followers ? ` · ${lead.followers}` : ''}
+                    {lead.employees_count ? ` · ${lead.employees_count}` : ''}
+                    {lead.decision_makers?.length ? ` · ${lead.decision_makers.length} decisor${lead.decision_makers.length !== 1 ? 'es' : ''}` : ''}
                   </div>
                 </div>
                 <span style={{ color: 'var(--text-muted)', fontSize: 11, flexShrink: 0 }}>
@@ -517,6 +505,30 @@ export default function AgentePage() {
                         </>
                       )}
                     </div>
+
+                    {/* Decisores */}
+                    {(lead.decision_makers?.length ?? 0) > 0 && (
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <p className="section-label" style={{ marginBottom: 8 }}>Decisores</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {lead.decision_makers.map((dm, i) => (
+                            <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ color: 'var(--cream)', fontWeight: 600 }}>{dm.name}</span>
+                              <span style={{ color: 'var(--text-muted)' }}>·</span>
+                              <span style={{ color: 'var(--text-secondary)' }}>{dm.role}</span>
+                              {dm.profile_url && (
+                                <a
+                                  href={dm.profile_url} target="_blank" rel="noreferrer"
+                                  style={{ color: '#4fa3e0', marginLeft: 'auto' }}
+                                >
+                                  LinkedIn ↗
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Dores */}
                     {(lead.dores_tipicas?.length ?? 0) > 0 && (
