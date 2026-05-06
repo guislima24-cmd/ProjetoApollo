@@ -358,7 +358,7 @@ export default function AgentePage() {
             </>
           )}
 
-          {leads.length > 0 && agentState !== 'scraping' && agentState !== 'loading_companies' && (
+          {leads.length > 0 && agentState !== 'scraping' && (
             <button
               onClick={handleClear}
               style={{
