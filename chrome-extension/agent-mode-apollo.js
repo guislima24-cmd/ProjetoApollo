@@ -117,18 +117,16 @@ async function apolloWaitForCompanyLinks(tabId, timeoutMs = 25000) {
       const result = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
-          const links = Array.from(document.querySelectorAll('a[href*="/companies/"]'))
-          const valid = links.filter(l => {
-            const href = l.getAttribute('href') ?? ''
-            const name = l.innerText?.trim() ?? ''
-            return /\/companies\/[a-zA-Z0-9_-]{6,}/i.test(href) && name.length >= 2
-          })
-          return { total: links.length, valid: valid.length, url: location.href }
+          // Conta links /companies/ OU linhas de tabela com conteúdo (Apollo pode não usar <a>)
+          const companyLinks = document.querySelectorAll('a[href*="/companies/"]').length
+          const tableRows = Array.from(document.querySelectorAll('tbody tr'))
+            .filter(r => r.querySelectorAll('td').length >= 2).length
+          return { companyLinks, tableRows, url: location.href }
         },
       })
       const info = result?.[0]?.result ?? {}
       console.log('[apollo] waitForLinks:', JSON.stringify(info))
-      if ((info.valid ?? 0) > 2) return true
+      if ((info.companyLinks ?? 0) > 2 || (info.tableRows ?? 0) > 2) return true
     } catch (e) {
       console.log('[apollo] waitForLinks err:', e?.message)
     }
@@ -247,55 +245,85 @@ async function extractApolloCompanies(tabId) {
     func: () => {
       const companies = []
       const seen = new Set()
-
-      // Links de empresa: qualquer /companies/ seguido de ID alfanumérico
       const COMPANY_ID_RE = /\/companies\/([a-zA-Z0-9_-]{6,40})(?:[/?#]|$)/
 
-      const allLinks = Array.from(document.querySelectorAll('a[href*="/companies/"]'))
+      // ── Estratégia 1: links <a href*="/companies/"> ──────────────────
+      // O nome pode estar no link OU em um elemento irmão (logo link sem texto)
+      const companyLinks = Array.from(document.querySelectorAll('a[href*="/companies/"]'))
 
-      allLinks.forEach(link => {
+      companyLinks.forEach(link => {
         const href  = link.getAttribute('href') ?? ''
         const match = href.match(COMPANY_ID_RE)
         if (!match) return
         const id = match[1]
         if (seen.has(id)) return
 
-        const name = link.innerText?.trim() ?? ''
+        // Tenta nome direto; se vazio, busca no elemento pai imediato
+        let name = link.innerText?.trim() ?? ''
+        if (!name) {
+          const parent = link.parentElement
+          // Procura span/div irmão que contenha texto
+          const siblings = parent ? Array.from(parent.children) : []
+          for (const sib of siblings) {
+            if (sib === link) continue
+            const t = sib.innerText?.trim() ?? ''
+            if (t.length >= 2) { name = t; break }
+          }
+          if (!name) name = parent?.innerText?.trim() ?? ''
+        }
+        name = name.split('\n')[0].trim()  // primeira linha apenas
         if (name.length < 2 || name.length > 150) return
-        if (/^[\d\s+\-()]+$/.test(name)) return  // só números/símbolos
+        if (/^[\d\s+\-()]+$/.test(name)) return
 
         seen.add(id)
 
-        const row = link.closest('tr')
-          ?? link.closest('[class*="row"]')
-          ?? link.closest('[class*="entity"]')
-          ?? link.closest('[class*="company"]')
-          ?? link.closest('li')
-          ?? link.parentElement?.parentElement
-
-        let website = '', employees = '', cidade = '', telefone = ''
-
+        const row = link.closest('tr') ?? link.closest('[class*="row"]') ?? link.closest('li') ?? link.parentElement?.parentElement
+        let website = '', employees = '', cidade = ''
         if (row) {
-          const siteLink = row.querySelector(
-            'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin"]):not([href*="/companies/"])'
-          )
-          if (siteLink) website = siteLink.href ?? ''
-
-          const texts = Array.from(row.querySelectorAll('td, [class*="cell"], [class*="col"], span'))
-            .map(c => c.innerText?.trim() ?? '')
-            .filter(t => t.length > 0 && t.length < 120)
-
-          employees = texts.find(t => /\d[\d,.]*\s*[-–]\s*[\d,.]+|\d[\d,.]+\+/i.test(t)) ?? ''
-          cidade    = texts.find(t => t.length > 4 && /[,·•]|Brasil|Brazil|SP|RJ|MG|São|Rio|Bras/i.test(t)) ?? ''
-          telefone  = texts.find(t => /^\+?[\d\s\-().]{8,}$/.test(t)) ?? ''
+          const siteLink = row.querySelector('a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin"]):not([href*="/companies/"])')
+          if (siteLink) website = siteLink.href
+          const texts = Array.from(row.querySelectorAll('td, span, [class*="cell"]'))
+            .map(c => c.innerText?.trim() ?? '').filter(t => t.length > 0 && t.length < 120)
+          employees = texts.find(t => /\d[\d,.]*\s*[-–]\s*[\d,.]+|\d[\d,.]+\+/.test(t)) ?? ''
+          cidade    = texts.find(t => t.length > 4 && /[,·]|Brasil|Brazil|SP|RJ|MG|São|Rio/i.test(t)) ?? ''
         }
-
-        const apolloUrl = href.startsWith('http')
-          ? href
-          : `https://app.apollo.io${href.startsWith('/') ? '' : '/'}${href}`
-
-        companies.push({ nome: name, apollo_url: apolloUrl, website, employees, setor: '', cidade, telefone, linkedin_url: null })
+        const apolloUrl = href.startsWith('http') ? href : `https://app.apollo.io${href.startsWith('/') ? '' : '/'}${href}`
+        companies.push({ nome: name, apollo_url: apolloUrl, website, employees, setor: '', cidade, telefone: '', linkedin_url: null })
       })
+
+      // ── Estratégia 2: linhas de tabela (quando não há <a>/companies/) ──
+      if (companies.length === 0) {
+        const rows = Array.from(document.querySelectorAll('tbody tr'))
+          .filter(r => r.querySelectorAll('td').length >= 2)
+
+        rows.forEach(row => {
+          const cells = Array.from(row.querySelectorAll('td'))
+          // Nome tipicamente na 1ª ou 2ª célula (pode ter checkbox antes)
+          let name = ''
+          for (let i = 0; i < Math.min(cells.length, 3); i++) {
+            const t = cells[i].innerText?.trim().split('\n')[0].trim() ?? ''
+            if (t.length >= 2 && t.length <= 100 && !/^[\d\s+\-()N/A]+$/.test(t)) {
+              name = t; break
+            }
+          }
+          if (!name || seen.has(name.toLowerCase())) return
+          seen.add(name.toLowerCase())
+
+          // Tenta pegar link de empresa da linha
+          const companyAnchor = row.querySelector('a[href*="/companies/"]')
+          const href = companyAnchor?.getAttribute('href') ?? ''
+          const apolloUrl = href
+            ? (href.startsWith('http') ? href : `https://app.apollo.io${href.startsWith('/') ? '' : '/'}${href}`)
+            : null
+
+          const siteLink = row.querySelector('a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin"]):not([href*="/companies/"])')
+          const texts = cells.map(c => c.innerText?.trim() ?? '').filter(t => t.length > 0 && t.length < 120)
+          const employees = texts.find(t => /\d[\d,.]*\s*[-–]\s*[\d,.]+|\d[\d,.]+\+/.test(t)) ?? ''
+          const cidade    = texts.find(t => t.length > 4 && /[,·]|Brasil|Brazil|SP|RJ|MG|São|Rio/i.test(t)) ?? ''
+
+          companies.push({ nome: name, apollo_url: apolloUrl, website: siteLink?.href ?? '', employees, setor: '', cidade, telefone: '', linkedin_url: null })
+        })
+      }
 
       return companies
     },
