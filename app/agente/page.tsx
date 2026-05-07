@@ -877,12 +877,14 @@ export default function AgentePage() {
             </div>
           )}
 
-          {apolloLeads.length === 0 && (apolloState === 'idle' || apolloState === 'done') && (
+          {apolloLeads.length === 0 && (apolloState === 'idle' || apolloState === 'done' || apolloState === 'error') && (
             <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
               <p style={{ fontSize: 36, margin: '0 0 12px' }}>🚀</p>
               <p style={{ fontSize: 14 }}>
                 {apolloState === 'idle'
                   ? 'Selecione o setor e inicie o agente Apollo para descobrir leads via Apollo.io.'
+                  : apolloState === 'error'
+                  ? 'Nenhuma empresa extraída. Verifique se está logado no Apollo.io e tente novamente.'
                   : 'Nenhum lead retornado. Certifique-se de estar logado no Apollo.io.'}
               </p>
             </div>

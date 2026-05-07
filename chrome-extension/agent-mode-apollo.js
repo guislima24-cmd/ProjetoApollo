@@ -103,7 +103,7 @@ async function apolloWaitForTab(tabId, timeoutMs = 30000) {
 }
 
 async function apolloOpenTab(url, extraDelayMs = 4000) {
-  const tab = await chrome.tabs.create({ url, active: true })
+  const tab = await chrome.tabs.create({ url, active: false })
   await apolloWaitForTab(tab.id)
   await new Promise(r => setTimeout(r, extraDelayMs))
   return tab.id
@@ -143,10 +143,11 @@ async function apolloDiagnostic(tabId) {
       target: { tabId },
       func: () => {
         const companyLinks = document.querySelectorAll('a[href*="/companies/"]').length
+        const roleRows     = document.querySelectorAll('[role="row"]').length
         const allLinks     = document.querySelectorAll('a').length
         const hasPassword  = !!document.querySelector('input[type="password"]')
         const bodyText     = (document.body?.innerText ?? '').replace(/\s+/g, ' ').slice(0, 400)
-        return { url: location.href, title: document.title, companyLinks, allLinks, hasPassword, bodyText }
+        return { url: location.href, title: document.title, companyLinks, roleRows, allLinks, hasPassword, bodyText }
       },
     })
     return result?.[0]?.result ?? {}
@@ -388,6 +389,62 @@ async function scrapeWebsiteText(tabId) {
   return result?.[0]?.result ?? ''
 }
 
+// ── Extração via API interna do Apollo (mais confiável que DOM) ───────────────
+// Roda fetch DENTRO da aba do Apollo → usa cookies de sessão automaticamente
+
+async function fetchApolloCompaniesViaApi(tabId, keywords, ranges, page) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (keywords, ranges, page) => {
+      const body = JSON.stringify({
+        page,
+        per_page: 25,
+        q_organization_keyword_tags:    keywords,
+        organization_num_employees_ranges: ranges,
+        prospected_by_current_team: ['no'],
+      })
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.content
+        ?? document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrf='))?.split('=')[1]
+        ?? ''
+      const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+      if (csrf) headers['X-CSRF-Token'] = csrf
+
+      // Tenta os endpoints mais comuns do Apollo.io
+      const endpoints = [
+        '/api/v1/mixed_companies/search',
+        '/api/v1/organizations/search',
+        '/api/v1/accounts/search',
+      ]
+
+      return endpoints.reduce((p, endpoint) =>
+        p.catch(() =>
+          fetch(endpoint, { method: 'POST', headers, body, credentials: 'include' })
+            .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
+        ),
+        Promise.reject()
+      ).catch(() => null)
+    },
+    args: [keywords, ranges, page],
+  })
+
+  const data = result?.[0]?.result
+  if (!data) return []
+
+  const orgs = data.organizations ?? data.accounts ?? data.companies ?? []
+  console.log('[apollo] API retornou', orgs.length, 'empresas')
+
+  return orgs.map(org => ({
+    nome:         org.name ?? '',
+    apollo_url:   org.id ? `https://app.apollo.io/#/companies/${org.id}` : null,
+    website:      org.website_url ?? org.primary_domain ?? '',
+    employees:    org.estimated_num_employees ? String(org.estimated_num_employees) : '',
+    setor:        org.industry ?? '',
+    cidade:       [org.city, org.state, org.country].filter(Boolean).join(', '),
+    telefone:     org.sanitized_phone ?? org.phone ?? '',
+    linkedin_url: org.linkedin_url ?? null,
+  })).filter(c => c.nome.length >= 2)
+}
+
 // ── Chamada à API de enriquecimento ───────────────────────────────────────────
 
 async function callProcessApollo(company, setor, portes) {
@@ -472,25 +529,28 @@ async function runApolloLoop() {
         return
       }
 
-      // Espera a lista renderizar (Apollo é SPA — status 'complete' não garante dados)
-      await apolloWaitForCompanyLinks(tabId, 25000)
+      // Estratégia 1: API interna do Apollo (mais rápida e confiável)
+      const keyword = APOLLO_SECTOR_MAP[setor?.toLowerCase()] ?? setor ?? ''
+      const ranges  = (portes ?? []).map(p => APOLLO_EMPLOYEE_RANGES[p]).filter(Boolean)
+      let entries = await fetchApolloCompaniesViaApi(tabId, keyword ? [keyword] : [], ranges, page)
+      console.log('[apollo] API entries:', entries.length)
 
-      // Aplica filtro de localização via DOM (se informado)
-      if (localizacao) {
-        await applyLocationFilter(tabId, localizacao)
-        await new Promise(r => setTimeout(r, 4000))
-        // Aguarda resultados recarregarem após o filtro
-        await apolloWaitForCompanyLinks(tabId, 15000)
+      // Estratégia 2: DOM extraction (fallback)
+      if (!entries.length) {
+        await apolloWaitForCompanyLinks(tabId, 20000)
+        if (localizacao) {
+          await applyLocationFilter(tabId, localizacao)
+          await new Promise(r => setTimeout(r, 3000))
+        }
+        entries = await extractApolloCompanies(tabId)
+        console.log('[apollo] DOM entries:', entries.length)
       }
-
-      // Extrai lista de empresas da página
-      const entries = await extractApolloCompanies(tabId)
 
       if (!entries.length) {
         const diag = await apolloDiagnostic(tabId)
-        console.log('[apollo] 0 empresas. Diagnóstico:', JSON.stringify(diag))
+        console.log('[apollo] 0 empresas. Diag:', JSON.stringify(diag))
         await apolloSet({
-          errorMessage: `0 empresas encontradas. URL: ${diag.url ?? '?'} | Links /companies/: ${diag.companyLinks ?? 0} | Login: ${diag.hasPassword ?? false} | Página: "${(diag.bodyText ?? '').slice(0, 200)}"`,
+          errorMessage: `0 empresas. URL: ${diag.url ?? '?'} | companyLinks: ${diag.companyLinks ?? 0} | roleRows: ${diag.roleRows ?? 0} | login: ${diag.hasPassword ?? false} | "${(diag.bodyText ?? '').slice(0, 150)}"`,
         })
         await apolloCloseTab(tabId); tabId = null
         break
@@ -512,33 +572,7 @@ async function runApolloLoop() {
         if (entryUrl)  seenUrls.add(entryUrl)
         if (entryName) seenNames.add(entryName)
 
-        // Opcional: abre página da empresa no Apollo para mais detalhes
-        let companyDetails = {}
-        if (entry.apollo_url) {
-          try {
-            const cTabId = await apolloOpenTab(entry.apollo_url, 3500)
-            companyDetails = await scrapeApolloCompanyPage(cTabId)
-            await apolloCloseTab(cTabId)
-          } catch {}
-        }
-
-        // Opcional: scraping do website
-        const website = companyDetails.website || entry.website || ''
-        let websiteText = ''
-        if (website && website.startsWith('http')) {
-          try {
-            const wTabId = await apolloOpenTab(website, 3000)
-            websiteText = await scrapeWebsiteText(wTabId)
-            await apolloCloseTab(wTabId)
-          } catch {}
-        }
-
-        const merged = {
-          ...entry,
-          ...companyDetails,
-          website:      website || entry.website,
-          website_text: websiteText || null,
-        }
+        const merged = { ...entry, website_text: null }
 
         // Chama API de enriquecimento
         const processed = await callProcessApollo(merged, setor, portes ?? [])
