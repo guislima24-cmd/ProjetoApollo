@@ -300,12 +300,27 @@ async function extractApolloCompanies(tabId) {
         pushCompany(name, apolloUrl, getRow(link))
       })
 
-      // ── Estratégia 2: [role="row"] / tbody tr (sem link /companies/) ───
+      // ── Estratégia 2: role/data-cy/zp_ rows (sem link /companies/) ────
       if (companies.length === 0) {
-        const rows = [
-          ...document.querySelectorAll('[role="row"]'),
-          ...document.querySelectorAll('tbody tr'),
-        ].filter(r => !r.closest('thead') && !r.querySelector('[role="columnheader"], th'))
+        const zpRowSelectors = [
+          '[data-cy="company-row"]',
+          '[data-cy*="company"]',
+          '[role="row"]',
+          'tbody tr',
+          '[class*="zp_"][class*="row" i]',
+          '[class*="zp_"][class*="Company" i]',
+        ]
+        // Qual seletor tem elementos?
+        for (const sel of zpRowSelectors) {
+          const test = document.querySelectorAll(sel)
+          if (test.length > 0) {
+            console.log('[APOLLO_AGENT] Seletor funcional encontrado:', sel, '(' + test.length + ' elementos)')
+            break
+          }
+        }
+        const rows = Array.from(new Set([
+          ...zpRowSelectors.flatMap(sel => Array.from(document.querySelectorAll(sel))),
+        ])).filter(r => !r.closest('thead') && !r.querySelector('[role="columnheader"], th'))
 
         rows.forEach(row => {
           const cells = Array.from(row.querySelectorAll('[role="gridcell"], [role="cell"], td'))
@@ -325,6 +340,11 @@ async function extractApolloCompanies(tabId) {
           const apolloUrl = href ? (href.startsWith('http') ? href : `https://app.apollo.io${href}`) : null
           pushCompany(name, apolloUrl, row)
         })
+      }
+
+      // Log de diagnóstico quando estratégias 1+2 falharam
+      if (companies.length === 0) {
+        console.log('[APOLLO_AGENT] HTML snapshot (2000 chars):', document.body?.innerHTML?.slice(0, 2000) ?? 'vazio')
       }
 
       // ── Estratégia 3: todos os <a> dentro do conteúdo principal ─────────
@@ -497,43 +517,53 @@ async function runApolloLoop() {
 
       // Abre Apollo com filtros
       const apolloUrl = buildApolloSearchUrl(setor, portes ?? [], page)
+      console.log('[APOLLO_AGENT] Abrindo Apollo.io:', apolloUrl)
       tabId = await apolloOpenTab(apolloUrl, 4000)
+      console.log('[APOLLO_AGENT] Aba aberta, tabId:', tabId)
 
       // Verifica autenticação
       const auth = await checkApolloAuth(tabId)
       if (auth.isLogin) {
+        console.log('[APOLLO_AGENT] Página de login detectada — pausando')
         await apolloCloseTab(tabId); tabId = null
         await apolloSet({ state: 'paused', pauseReason: 'login' })
         return
       }
 
       // Aguarda interceptor capturar dados da API ou DOM renderizar
+      console.log('[APOLLO_AGENT] Aguardando lista carregar (interceptor + DOM)…')
       await apolloWaitForCompanyLinks(tabId, 25000)
+      console.log('[APOLLO_AGENT] Espera concluída, tentando extrair empresas')
 
       // Estratégia 1: interceptor (apollo-interceptor.js capturou a resposta JSON da API)
       const interceptedData = await readInterceptedCompanies(tabId)
       let entries = orgsFromIntercepted(interceptedData)
-      console.log('[apollo] interceptor entries:', entries.length)
+      console.log('[APOLLO_AGENT] Interceptor entries:', entries.length, interceptedData ? `(url: ${interceptedData._url})` : '(null)')
 
       // Estratégia 2: DOM extraction (fallback)
       if (!entries.length) {
+        console.log('[APOLLO_AGENT] Interceptor vazio — tentando DOM extraction')
         if (localizacao) {
+          console.log('[APOLLO_AGENT] Aplicando filtro de localização:', localizacao)
           await applyLocationFilter(tabId, localizacao)
           await new Promise(r => setTimeout(r, 3000))
+          console.log('[APOLLO_AGENT] Filtro de localização aplicado')
         }
         entries = await extractApolloCompanies(tabId)
-        console.log('[apollo] DOM entries:', entries.length)
+        console.log('[APOLLO_AGENT] DOM entries:', entries.length)
       }
 
       if (!entries.length) {
         const diag = await apolloDiagnostic(tabId)
-        console.log('[apollo] 0 empresas. Diag:', JSON.stringify(diag))
+        console.log('[APOLLO_AGENT] 0 empresas. Diagnóstico:', JSON.stringify(diag))
         await apolloSet({
           errorMessage: `0 empresas. URL: ${diag.url ?? '?'} | companyLinks: ${diag.companyLinks ?? 0} | roleRows: ${diag.roleRows ?? 0} | login: ${diag.hasPassword ?? false} | "${(diag.bodyText ?? '').slice(0, 150)}"`,
         })
         await apolloCloseTab(tabId); tabId = null
         break
       }
+
+      console.log('[APOLLO_AGENT] Lista carregada, encontradas', entries.length, 'empresas')
 
       await apolloCloseTab(tabId); tabId = null
 
@@ -551,9 +581,11 @@ async function runApolloLoop() {
         if (entryUrl)  seenUrls.add(entryUrl)
         if (entryName) seenNames.add(entryName)
 
+        console.log(`[APOLLO_AGENT] Empresa ${collected + 1}/${target}: ${entry.nome} | site: ${entry.website || '-'} | linkedin: ${entry.linkedin_url || '-'}`)
         const merged = { ...entry, website_text: null }
 
         // Chama API de enriquecimento
+        console.log('[APOLLO_AGENT] Enviando para enriquecimento:', merged.nome)
         const processed = await callProcessApollo(merged, setor, portes ?? [])
 
         const lead = {
@@ -606,12 +638,13 @@ async function runApolloLoop() {
 
 chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
   if (message.type === 'APOLLO_PING') {
+    console.log('[APOLLO_AGENT] PING recebido, respondendo available')
     sendResponse({ ok: true, version: APOLLO_VERSION })
     return false
   }
 
   if (message.type === 'APOLLO_SCRAPE_QUEUE') {
-    console.log('[apollo] APOLLO_SCRAPE_QUEUE recebido', message.searchParams)
+    console.log('[APOLLO_AGENT] Fila recebida:', JSON.stringify(message.searchParams))
     ;(async () => {
       try {
         const { searchParams } = message
@@ -630,7 +663,7 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
           errorMessage: null,
         })
 
-        console.log('[apollo] storage inicializado, enviando ok')
+        console.log('[APOLLO_AGENT] Storage inicializado, enviando ok')
         sendResponse({ ok: true, target: searchParams.limite ?? 10 })
 
         runApolloLoop().catch(async err => {

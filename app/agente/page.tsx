@@ -99,6 +99,7 @@ export default function AgentePage() {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
 
   const [localizacao, setLocalizacao] = useState('')
+  const [showIdTooltip, setShowIdTooltip] = useState(false)
 
   // Apollo mode state
   const [apolloState,      setApolloState]      = useState<AgentState>('idle')
@@ -143,6 +144,10 @@ export default function AgentePage() {
 
   function sendToExt(message: object): Promise<any> {
     const cr = (window as any).chrome?.runtime
+    if (!extId || extId.length !== 32) {
+      console.error('[APOLLO_AGENT] EXTENSION_ID inválido ou ausente:', extId)
+      return Promise.resolve(null)
+    }
     return new Promise(resolve => {
       cr.sendMessage(extId, message, (res: any) => {
         if (cr.lastError) resolve(null)
@@ -343,7 +348,25 @@ export default function AgentePage() {
 
       {/* Conexão com extensão */}
       <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
-        <p className="section-label" style={{ marginBottom: 10 }}>Extensão Chrome</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <p className="section-label" style={{ margin: 0 }}>Extensão Chrome</p>
+          <button
+            onClick={() => setShowIdTooltip(v => !v)}
+            style={{ fontSize: 11, color: 'var(--text-muted)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+          >
+            Como pegar o ID?
+          </button>
+        </div>
+        {showIdTooltip && (
+          <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+            <strong>Passo a passo:</strong><br/>
+            1. Instale a extensão ProspectAI (baixe em <strong>/instalar</strong>)<br/>
+            2. Acesse <strong>chrome://extensions</strong> no Chrome<br/>
+            3. Ative o <strong>Modo Desenvolvedor</strong> (toggle no canto superior direito)<br/>
+            4. Localize <em>ProspectAI — UFABC Júnior</em> e copie o ID exibido abaixo do nome<br/>
+            5. Cole o ID no campo abaixo e clique em <strong>Testar</strong>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <input
             className="input"
@@ -372,9 +395,11 @@ export default function AgentePage() {
           </span>
         </div>
         {extStatus === 'disconnected' && (
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.6 }}>
-            Instale a extensão ProspectAI, vá em <strong>chrome://extensions</strong>,
-            ative o Modo Desenvolvedor, copie o ID e cole acima.
+          <p style={{ fontSize: 12, color: '#ef4444', marginTop: 10, lineHeight: 1.6 }}>
+            {!extId || extId.length !== 32
+              ? '❌ EXTENSION_ID não configurado — cole o ID acima ou configure NEXT_PUBLIC_EXTENSION_ID no .env'
+              : `❌ Extensão não responde — verifique se o ID "${extId.slice(0, 8)}…" está correto em chrome://extensions/`
+            }
           </p>
         )}
       </div>
