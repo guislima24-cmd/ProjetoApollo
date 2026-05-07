@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 
 type AgentState = 'idle' | 'scraping' | 'paused' | 'done' | 'error'
-type AgentMode  = 'linkedin' | 'apollo'
+type AgentMode  = 'linkedin' | 'apollo' | 'maps'
 
 interface DecisionMaker {
   name:        string
@@ -56,6 +56,25 @@ interface ApolloLead {
   ok:                 boolean
 }
 
+interface MapsLead {
+  nome:               string
+  setor:              string
+  cidade:             string
+  endereco:           string
+  telefone_br:        string | null
+  telefone_intl:      string | null
+  site:               string | null
+  horario:            string | null
+  potencial:          string | null
+  justificativa:      string | null
+  dores_tipicas:      string[]
+  servicos_sugeridos: string[]
+  melhor_canal:       string | null
+  melhor_horario:     string | null
+  argumento_abertura: string | null
+  ok:                 boolean
+}
+
 const SECTORS = [
   'TI', 'Tecnologia', 'Construção Civil', 'Educação', 'Saúde',
   'Varejo', 'Logística', 'Indústria', 'Alimentação', 'Consultoria',
@@ -70,10 +89,22 @@ const REGIONS = [
 
 const PORTES = ['MEI', 'ME', 'EPP', 'MEDIO', 'GRANDE']
 
+const MAPS_CITIES = [
+  'Santo André', 'São Bernardo do Campo', 'São Caetano do Sul',
+  'Mauá', 'Diadema', 'Ribeirão Pires',
+  'São Paulo', 'Guarulhos', 'Campinas', 'Barueri', 'Osasco',
+]
+
+const MAPS_SECTORS = [
+  'Indústria química', 'Construção civil', 'Consultoria de engenharia',
+  'Manufatura', 'TI', 'Alimentação', 'Saúde', 'Educação',
+  'Logística', 'Varejo', 'Imobiliário', 'Jurídico',
+]
+
 function potencialColor(p: string | null) {
-  if (p === 'Alto')  return '#22c55e'
-  if (p === 'Médio') return '#f59e0b'
-  if (p === 'Baixo') return '#ef4444'
+  if (p === 'Alto'  || p === 'alto')  return '#22c55e'
+  if (p === 'Médio' || p === 'medio') return '#f59e0b'
+  if (p === 'Baixo' || p === 'baixo') return '#ef4444'
   return '#888'
 }
 
@@ -109,8 +140,35 @@ export default function AgentePage() {
   const [apolloErrorMsg,   setApolloErrorMsg]   = useState<string | null>(null)
   const [apolloExpandedIdx,setApolloExpandedIdx] = useState<number | null>(null)
 
-  const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Maps mode state
+  const [mapsState,       setMapsState]       = useState<AgentState>('idle')
+  const [mapsLeads,       setMapsLeads]       = useState<MapsLead[]>([])
+  const [mapsProgress,    setMapsProgress]    = useState({ done: 0, total: 0 })
+  const [mapsErrorMsg,    setMapsErrorMsg]    = useState<string | null>(null)
+  const [mapsExpandedIdx, setMapsExpandedIdx] = useState<number | null>(null)
+
+  // Maps filters
+  const [mapsCidades,  setMapsCidades]  = useState<string[]>([])
+  const [mapsSetor,    setMapsSetor]    = useState('')
+  const [mapsLimite,   setMapsLimite]   = useState(20)
+  const [mapsUseAI,    setMapsUseAI]    = useState(true)
+
+  // Maps usage widget
+  const [mapsUsage, setMapsUsage] = useState<{
+    totalCost:        number
+    percentUsed:      number
+    totalCalls:       number
+    callsByType:      { text_search: number; place_details: number }
+    daysUntilReset:   number
+    limit:            number
+    warning:          boolean
+    blocked:          boolean
+    apiKeyConfigured: boolean
+  } | null>(null)
+
+  const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null)
   const apolloPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const mapsAbortRef  = useRef<AbortController | null>(null)
 
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login')
@@ -302,9 +360,93 @@ export default function AgentePage() {
     if (apolloPollRef.current) { clearInterval(apolloPollRef.current); apolloPollRef.current = null }
   }
 
+  async function fetchMapsUsage() {
+    try {
+      const res = await fetch('/api/agent/maps-usage')
+      if (res.ok) setMapsUsage(await res.json())
+    } catch {}
+  }
+
+  async function handleMapsStart() {
+    if (mapsAbortRef.current) mapsAbortRef.current.abort()
+    const ctrl = new AbortController()
+    mapsAbortRef.current = ctrl
+
+    setMapsLeads([])
+    setMapsProgress({ done: 0, total: mapsCidades.length * mapsLimite })
+    setMapsErrorMsg(null)
+    setMapsExpandedIdx(null)
+    setMapsState('scraping')
+
+    try {
+      const res = await fetch('/api/agent/start-maps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ setor: mapsSetor, cidades: mapsCidades, limite: mapsLimite, useAI: mapsUseAI }),
+        signal: ctrl.signal,
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }))
+        setMapsErrorMsg((err as any).error ?? 'Erro ao iniciar busca')
+        setMapsState('error')
+        return
+      }
+
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let found = 0
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const event = JSON.parse(line.slice(6)) as any
+            if (event.type === 'company_found') {
+              found++
+              setMapsProgress(p => ({ ...p, done: found }))
+            } else if (event.type === 'lead_saved' && event.lead) {
+              setMapsLeads(prev => [...prev, event.lead as MapsLead])
+            } else if (event.type === 'done') {
+              setMapsState(event.total_saved > 0 ? 'done' : 'error')
+              setMapsProgress({ done: event.total_saved, total: event.total_found || found })
+              fetchMapsUsage()
+            } else if (event.type === 'error' && event.blocked) {
+              setMapsErrorMsg(event.message)
+            }
+          } catch {}
+        }
+      }
+      if (mapsState === 'scraping') setMapsState('done')
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return
+      setMapsErrorMsg(String(err))
+      setMapsState('error')
+    }
+  }
+
+  function handleMapsClear() {
+    mapsAbortRef.current?.abort()
+    setMapsLeads([])
+    setMapsProgress({ done: 0, total: 0 })
+    setMapsState('idle')
+    setMapsErrorMsg(null)
+    setMapsExpandedIdx(null)
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (mode === 'maps') fetchMapsUsage() }, [mode])
+
   useEffect(() => () => {
     if (pollRef.current)      clearInterval(pollRef.current)
     if (apolloPollRef.current) clearInterval(apolloPollRef.current)
+    mapsAbortRef.current?.abort()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -312,6 +454,7 @@ export default function AgentePage() {
 
   const canStart       = !!setor && regioes.length > 0 && extStatus === 'connected'
   const canApolloStart = !!setor && extStatus === 'connected'
+  const canMapsStart   = !!mapsSetor && mapsCidades.length > 0 && mapsState !== 'scraping' && !mapsUsage?.blocked
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 20px' }}>
@@ -329,19 +472,19 @@ export default function AgentePage() {
 
       {/* Seletor de modo */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {(['linkedin', 'apollo'] as AgentMode[]).map(m => (
+        {(['linkedin', 'apollo', 'maps'] as AgentMode[]).map(m => (
           <button
             key={m}
             onClick={() => setMode(m)}
             style={{
               padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              border: `1px solid ${mode === m ? 'var(--green-primary)' : 'var(--border)'}`,
-              background: mode === m ? 'rgba(49,112,57,0.18)' : 'transparent',
-              color: mode === m ? 'var(--green-primary)' : 'var(--text-muted)',
+              border: `1px solid ${mode === m ? (m === 'maps' ? '#14b8a6' : 'var(--green-primary)') : 'var(--border)'}`,
+              background: mode === m ? (m === 'maps' ? 'rgba(20,184,166,0.18)' : 'rgba(49,112,57,0.18)') : 'transparent',
+              color: mode === m ? (m === 'maps' ? '#14b8a6' : 'var(--green-primary)') : 'var(--text-muted)',
               cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
             }}
           >
-            {m === 'linkedin' ? '🔗 LinkedIn' : '🚀 Apollo.io'}
+            {m === 'linkedin' ? '🔗 LinkedIn' : m === 'apollo' ? '🚀 Apollo.io' : '🗺️ Google Maps'}
           </button>
         ))}
       </div>
@@ -496,6 +639,135 @@ export default function AgentePage() {
             </div>
           )}
 
+          {/* Google Maps: filtros específicos */}
+          {mode === 'maps' && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={{ fontSize: 12, color: '#14b8a6', marginBottom: 12, fontWeight: 600 }}>
+                ✅ Este modo funciona sem extensão Chrome — busca feita diretamente via Google Places API.
+              </div>
+
+              {mapsUsage && !mapsUsage.apiKeyConfigured && (
+                <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#f59e0b' }}>
+                  ⚠️ Configure <strong>GOOGLE_PLACES_API_KEY</strong> no .env para usar este modo.
+                  Acesse console.cloud.google.com → ativar "Places API (New)" → Credenciais → Criar chave API.
+                </div>
+              )}
+
+              {mapsUsage && (
+                <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--cream)' }}>📊 Uso do mês — Google Maps</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Renova em {mapsUsage.daysUntilReset} dias</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: mapsUsage.percentUsed >= 75 ? '#ef4444' : mapsUsage.percentUsed >= 50 ? '#f59e0b' : 'var(--text-secondary)', marginBottom: 6 }}>
+                    <span>Custo: ${mapsUsage.totalCost.toFixed(2)} / ${mapsUsage.limit.toFixed(2)} (limite seguro)</span>
+                    <span style={{ fontWeight: 700 }}>{Math.round(mapsUsage.percentUsed)}%</span>
+                  </div>
+                  <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden', marginBottom: 6 }}>
+                    <div style={{
+                      height: '100%', borderRadius: 3,
+                      background: mapsUsage.percentUsed >= 75 ? '#ef4444' : mapsUsage.percentUsed >= 50 ? '#f59e0b' : '#14b8a6',
+                      width: `${Math.min(mapsUsage.percentUsed, 100)}%`, transition: 'width 0.4s',
+                    }} />
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', gap: 14 }}>
+                    <span>Buscas: {mapsUsage.callsByType.text_search}</span>
+                    <span>Detalhes: {mapsUsage.callsByType.place_details}</span>
+                    <span>Empresas este mês: ~{mapsUsage.callsByType.place_details}</span>
+                  </div>
+                  {mapsUsage.blocked && (
+                    <p style={{ fontSize: 12, color: '#ef4444', margin: '8px 0 0', fontWeight: 600 }}>
+                      🚫 Limite de segurança atingido. Aguarde o próximo mês ou aumente MAPS_SAFE_LIMIT_USD no .env.
+                    </p>
+                  )}
+                  {!mapsUsage.blocked && mapsUsage.warning && (
+                    <p style={{ fontSize: 12, color: '#f59e0b', margin: '8px 0 0' }}>
+                      ⚠️ Atenção: uso acima de 50%. Restam ${(mapsUsage.limit - mapsUsage.totalCost).toFixed(2)} antes do limite de segurança.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <label className="section-label">Setor / Tipo de negócio *</label>
+              <input
+                className="input"
+                value={mapsSetor}
+                onChange={e => setMapsSetor(e.target.value)}
+                placeholder="Ex: Indústria química, Construção civil, TI…"
+                style={{ width: '100%', marginTop: 8, fontSize: 13 }}
+                list="maps-sectors-list"
+              />
+              <datalist id="maps-sectors-list">
+                {MAPS_SECTORS.map(s => <option key={s} value={s} />)}
+              </datalist>
+
+              <label className="section-label" style={{ display: 'block', marginTop: 14 }}>Cidades *</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {MAPS_CITIES.map(c => {
+                  const active = mapsCidades.includes(c)
+                  return (
+                    <button
+                      key={c}
+                      onClick={() => setMapsCidades(p => active ? p.filter(x => x !== c) : [...p, c])}
+                      style={{
+                        padding: '4px 10px', borderRadius: 16, fontSize: 11,
+                        border: `1px solid ${active ? '#14b8a6' : 'var(--border)'}`,
+                        background: active ? 'rgba(20,184,166,0.15)' : 'transparent',
+                        color: active ? '#14b8a6' : 'var(--text-muted)',
+                        cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
+                      }}
+                    >
+                      {c}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <label className="section-label">Resultados por cidade: {mapsLimite}</label>
+                <input
+                  type="range" min={5} max={20} step={5}
+                  value={mapsLimite}
+                  onChange={e => setMapsLimite(Number(e.target.value))}
+                  style={{ width: '100%', marginTop: 8 }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)' }}>
+                  <span>5</span><span>10</span><span>15</span><span>20</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
+                <button
+                  onClick={() => setMapsUseAI(v => !v)}
+                  style={{
+                    width: 36, height: 20, borderRadius: 10, flexShrink: 0,
+                    background: mapsUseAI ? '#14b8a6' : 'var(--border)',
+                    border: 'none', cursor: 'pointer', position: 'relative', transition: 'background 0.2s',
+                  }}
+                >
+                  <span style={{
+                    position: 'absolute', top: 2, left: mapsUseAI ? 18 : 2,
+                    width: 16, height: 16, borderRadius: 8, background: '#fff',
+                    transition: 'left 0.2s',
+                  }} />
+                </button>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                  Enriquecer com análise IA {mapsUseAI ? '(ativo)' : '(desativado)'}
+                </span>
+              </div>
+
+              {mapsCidades.length > 0 && (
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
+                  Estimativa de custo: ~${((mapsCidades.length * 0.04) + (mapsCidades.length * mapsLimite * 0.017)).toFixed(3)} para esta busca
+                  ({mapsCidades.length} cidade{mapsCidades.length !== 1 ? 's' : ''} × {mapsLimite} resultados)
+                </p>
+              )}
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, fontStyle: 'italic' }}>
+                Ideal para ligações frias e WhatsApp — foca em telefones verificados de empresas operacionais.
+              </p>
+            </div>
+          )}
+
           {/* Portes */}
           <div style={{ gridColumn: '1 / -1' }}>
             <label className="section-label">Porte (opcional — vazio = todos)</label>
@@ -596,6 +868,53 @@ export default function AgentePage() {
             {apolloLeads.length > 0 && apolloState !== 'scraping' && (
               <button
                 onClick={handleApolloClear}
+                style={{
+                  marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)',
+                  color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 7,
+                  fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans',
+                }}
+              >
+                🗑 Limpar
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Botões de controle — Google Maps */}
+        {mode === 'maps' && (
+          <div style={{ display: 'flex', gap: 10, marginTop: 22, alignItems: 'center', flexWrap: 'wrap' }}>
+            {(mapsState === 'idle' || mapsState === 'done' || mapsState === 'error') && (
+              <button
+                onClick={handleMapsStart}
+                disabled={!canMapsStart}
+                style={{
+                  padding: '9px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                  background: canMapsStart ? '#14b8a6' : 'var(--border)',
+                  color: canMapsStart ? '#fff' : 'var(--text-muted)',
+                  border: 'none', cursor: canMapsStart ? 'pointer' : 'not-allowed',
+                  fontFamily: 'DM Sans, sans-serif',
+                }}
+              >
+                {mapsState === 'idle' ? '🗺️ Buscar via Google Maps' : '🗺️ Nova Busca'}
+              </button>
+            )}
+
+            {mapsState === 'scraping' && (
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  mapsAbortRef.current?.abort()
+                  setMapsState('error')
+                  setMapsErrorMsg('Busca cancelada pelo usuário.')
+                }}
+              >
+                ⏸ Cancelar
+              </button>
+            )}
+
+            {mapsLeads.length > 0 && mapsState !== 'scraping' && (
+              <button
+                onClick={handleMapsClear}
                 style={{
                   marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)',
                   color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 7,
@@ -911,6 +1230,163 @@ export default function AgentePage() {
                   : apolloState === 'error'
                   ? 'Nenhuma empresa extraída. Verifique se está logado no Apollo.io e tente novamente.'
                   : 'Nenhum lead retornado. Certifique-se de estar logado no Apollo.io.'}
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── MODO GOOGLE MAPS ─────────────────────────────────────── */}
+      {mode === 'maps' && (
+        <>
+          {mapsProgress.total > 0 && (
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                <span>
+                  {mapsState === 'scraping' && (
+                    <><span className="spinner" style={{ display: 'inline-block', width: 11, height: 11, marginRight: 6 }} />Buscando no Google Maps…</>
+                  )}
+                  {mapsState === 'done'  && '✓ Concluído'}
+                  {mapsState === 'error' && '⚠ Finalizado'}
+                </span>
+                <span style={{ fontWeight: 600 }}>{mapsProgress.done} / {mapsProgress.total}</span>
+              </div>
+              <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 2, background: '#14b8a6',
+                  width: `${mapsProgress.total > 0 ? Math.round((mapsProgress.done / mapsProgress.total) * 100) : 0}%`,
+                  transition: 'width 0.4s',
+                }} />
+              </div>
+            </div>
+          )}
+
+          {mapsState === 'error' && mapsErrorMsg && (
+            <div className="card" style={{ marginBottom: 16, border: '1px solid #ef4444', background: 'rgba(239,68,68,0.07)', padding: '12px 16px' }}>
+              <p style={{ fontSize: 13, color: '#ef4444', margin: 0 }}>⚠ {mapsErrorMsg}</p>
+            </div>
+          )}
+
+          {mapsLeads.length > 0 && (
+            <div>
+              <p className="section-label" style={{ marginBottom: 12 }}>
+                {mapsLeads.length} empresa{mapsLeads.length !== 1 ? 's' : ''} encontrada{mapsLeads.length !== 1 ? 's' : ''} via Google Maps
+              </p>
+
+              {mapsLeads.map((lead, idx) => (
+                <div
+                  key={`${lead.nome}-${lead.cidade}-${idx}`}
+                  className="card fade-in"
+                  style={{ marginBottom: 10, cursor: 'pointer', padding: '14px 18px' }}
+                  onClick={() => setMapsExpandedIdx(mapsExpandedIdx === idx ? null : idx)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, color: 'var(--cream)', fontSize: 14 }}>{lead.nome}</span>
+                        {lead.potencial && (
+                          <span className="badge" style={{
+                            background: potencialColor(lead.potencial) + '22',
+                            color:      potencialColor(lead.potencial),
+                            border:     `1px solid ${potencialColor(lead.potencial)}44`,
+                            fontSize: 11,
+                          }}>
+                            {lead.potencial}
+                          </span>
+                        )}
+                        {lead.melhor_canal && (
+                          <span className="badge" style={{
+                            background: 'rgba(20,184,166,0.12)', color: '#14b8a6',
+                            border: '1px solid rgba(20,184,166,0.3)', fontSize: 11,
+                          }}>
+                            {lead.melhor_canal === 'ligacao' ? '📞' : lead.melhor_canal === 'whatsapp' ? '💬' : '📞💬'} {lead.melhor_canal}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+                        {lead.setor}{lead.cidade ? ` · ${lead.cidade}` : ''}{lead.telefone_br ? ` · ${lead.telefone_br}` : ''}
+                        {lead.site ? ` · ${lead.site.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}
+                      </div>
+                    </div>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11, flexShrink: 0 }}>
+                      {mapsExpandedIdx === idx ? '▲' : '▼'}
+                    </span>
+                  </div>
+
+                  {mapsExpandedIdx === idx && (
+                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                        <div>
+                          <p className="section-label" style={{ marginBottom: 8 }}>Contato</p>
+                          {lead.telefone_br && <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>📞 {lead.telefone_br}</p>}
+                          {lead.telefone_intl && (
+                            <a
+                              href={`https://wa.me/${lead.telefone_intl}`}
+                              target="_blank" rel="noreferrer"
+                              style={{ fontSize: 12, color: '#25d366', display: 'block', margin: '4px 0' }}
+                            >
+                              💬 WhatsApp ↗
+                            </a>
+                          )}
+                          {lead.site && (
+                            <a href={lead.site} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#4fa3e0', display: 'block', marginTop: 4 }}>Site ↗</a>
+                          )}
+                          {!lead.telefone_br && !lead.site && (
+                            <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sem dados de contato</p>
+                          )}
+                          {lead.endereco && (
+                            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>📍 {lead.endereco}</p>
+                          )}
+                          {lead.horario && (
+                            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>🕒 {lead.horario.split(' | ')[0]}</p>
+                          )}
+                        </div>
+                        <div>
+                          {lead.justificativa && (
+                            <>
+                              <p className="section-label" style={{ marginBottom: 6 }}>Análise IA</p>
+                              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>{lead.justificativa}</p>
+                            </>
+                          )}
+                          {lead.argumento_abertura && (
+                            <>
+                              <p className="section-label" style={{ marginBottom: 6, marginTop: 12 }}>Argumento de abertura</p>
+                              <p style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.6, margin: 0 }}>&ldquo;{lead.argumento_abertura}&rdquo;</p>
+                            </>
+                          )}
+                          {lead.melhor_horario && (
+                            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                              Melhor horário: <strong style={{ color: 'var(--text-secondary)' }}>{lead.melhor_horario}</strong>
+                            </p>
+                          )}
+                        </div>
+                        {(lead.dores_tipicas?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Dores típicas</p>
+                            {lead.dores_tipicas.map((d, i) => <p key={i} style={{ fontSize: 12, color: '#ef4444', margin: '3px 0' }}>! {d}</p>)}
+                          </div>
+                        )}
+                        {(lead.servicos_sugeridos?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Serviços sugeridos</p>
+                            {lead.servicos_sugeridos.map((s, i) => <p key={i} style={{ fontSize: 12, color: '#14b8a6', margin: '3px 0' }}>✓ {s}</p>)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {mapsLeads.length === 0 && (mapsState === 'idle' || mapsState === 'done' || mapsState === 'error') && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
+              <p style={{ fontSize: 36, margin: '0 0 12px' }}>🗺️</p>
+              <p style={{ fontSize: 14 }}>
+                {mapsState === 'idle'
+                  ? 'Selecione o setor e as cidades para descobrir leads via Google Maps.'
+                  : 'Nenhum lead retornado. Verifique a API key e os filtros selecionados.'}
               </p>
             </div>
           )}

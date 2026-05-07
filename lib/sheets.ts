@@ -1261,3 +1261,220 @@ export async function saveDiscoveredLead(lead: DiscoveredLeadRecord): Promise<vo
     }))
   }
 }
+
+// ── Google Maps Leads ─────────────────────────────────────────────────────────
+
+const MAPS_TAB = 'Leads Maps'
+const MAPS_HEADERS = [
+  'Data', 'Empresa', 'Setor', 'Cidade', 'Endereço',
+  'Telefone BR', 'Telefone Internacional', 'Site', 'Horário',
+  'Potencial IA', 'Justificativa', 'Dores Típicas', 'Serviços Sugeridos',
+  'Melhor Canal', 'Melhor Horário', 'Argumento de Abertura', 'Status', 'Membro',
+]
+
+let mapsTabEnsured = false
+
+async function ensureMapsTab(): Promise<void> {
+  if (mapsTabEnsured) return
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+  const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === MAPS_TAB)
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: MAPS_TAB } } }] },
+    })
+  }
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${MAPS_TAB}'!A1:R1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [MAPS_HEADERS] },
+  }))
+  mapsTabEnsured = true
+}
+
+export async function saveMapLead(params: {
+  empresa:            string
+  setor:              string
+  cidade:             string
+  endereco:           string
+  telefone_br:        string | null
+  telefone_intl:      string | null
+  site:               string | null
+  horario:            string | null
+  potencial:          string | null
+  justificativa:      string | null
+  dores_tipicas:      string[]
+  servicos_sugeridos: string[]
+  melhor_canal:       string | null
+  melhor_horario:     string | null
+  argumento_abertura: string | null
+  memberTab:          string
+}): Promise<number> {
+  await ensureMapsTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const now = new Date().toLocaleDateString('pt-BR')
+  const row = [
+    now,
+    sanitize(params.empresa),
+    sanitize(params.setor),
+    sanitize(params.cidade),
+    sanitize(params.endereco),
+    params.telefone_br        ?? '',
+    params.telefone_intl      ?? '',
+    params.site               ?? '',
+    params.horario            ?? '',
+    sanitize(params.potencial          ?? ''),
+    sanitize(params.justificativa      ?? ''),
+    (params.dores_tipicas      ?? []).join('; '),
+    (params.servicos_sugeridos ?? []).join('; '),
+    params.melhor_canal       ?? '',
+    params.melhor_horario     ?? '',
+    sanitize(params.argumento_abertura ?? ''),
+    'Novo',
+    sanitize(params.memberTab),
+  ]
+
+  // Dedup by empresa + cidade (cols B and D)
+  const batchRes = await withRetry(() => sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: [`'${MAPS_TAB}'!B:B`, `'${MAPS_TAB}'!D:D`],
+  }))
+  const nomes   = batchRes.data.valueRanges?.[0]?.values ?? []
+  const cidades = batchRes.data.valueRanges?.[1]?.values ?? []
+
+  const nomeLow   = params.empresa.toLowerCase().trim()
+  const cidadeLow = params.cidade.toLowerCase().trim()
+
+  let existingRow = -1
+  for (let i = 1; i < Math.max(nomes.length, cidades.length); i++) {
+    if (
+      (nomes[i]?.[0] ?? '').toLowerCase().trim() === nomeLow &&
+      (cidades[i]?.[0] ?? '').toLowerCase().trim() === cidadeLow
+    ) {
+      existingRow = i + 1
+      break
+    }
+  }
+
+  if (existingRow > 1) {
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${MAPS_TAB}'!A${existingRow}:R${existingRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [row] },
+    }))
+    return existingRow
+  }
+
+  const lastRow = Math.max(nomes.length, cidades.length, 1)
+  const targetRow = Math.max(2, lastRow + 1)
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${MAPS_TAB}'!A${targetRow}:R${targetRow}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [row] },
+  }))
+  return targetRow
+}
+
+// ── Maps API Usage Tracking ───────────────────────────────────────────────────
+
+const MAPS_USAGE_TAB = 'Maps Usage'
+const MAPS_USAGE_HEADERS = [
+  'Data', 'Mês/Ano', 'Tipo Chamada', 'Custo Estimado USD', 'Custo Acumulado Mês', 'Empresa Pesquisada', 'Membro',
+]
+
+let mapsUsageTabEnsured = false
+
+async function ensureMapsUsageTab(): Promise<void> {
+  if (mapsUsageTabEnsured) return
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+  const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === MAPS_USAGE_TAB)
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: MAPS_USAGE_TAB } } }] },
+    })
+  }
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${MAPS_USAGE_TAB}'!A1:G1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [MAPS_USAGE_HEADERS] },
+  }))
+  mapsUsageTabEnsured = true
+}
+
+export async function logMapsApiCall(
+  type: 'text_search' | 'place_details',
+  companyName: string,
+  member: string,
+  accumulatedCost: number,
+): Promise<void> {
+  await ensureMapsUsageTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const cost = type === 'text_search' ? 0.04 : 0.017
+  const now = new Date()
+  const monthYear = `${now.getMonth() + 1}/${now.getFullYear()}`
+
+  await withRetry(() => sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `'${MAPS_USAGE_TAB}'!A:G`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: {
+      values: [[
+        now.toISOString(),
+        monthYear,
+        type,
+        cost.toFixed(4),
+        accumulatedCost.toFixed(4),
+        companyName,
+        member,
+      ]],
+    },
+  }))
+}
+
+export async function getMapsMonthlyUsage(): Promise<{
+  textSearchCount:   number
+  placeDetailsCount: number
+  totalCost:         number
+}> {
+  await ensureMapsUsageTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const now = new Date()
+  const monthYear = `${now.getMonth() + 1}/${now.getFullYear()}`
+
+  const res = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${MAPS_USAGE_TAB}'!A:E`,
+  }))
+
+  const rows: string[][] = (res.data.values ?? []) as string[][]
+  let textSearchCount   = 0
+  let placeDetailsCount = 0
+  let totalCost         = 0
+
+  for (const row of rows.slice(1)) {
+    if (row[1] !== monthYear) continue
+    const type = row[2] as 'text_search' | 'place_details'
+    const cost = parseFloat(row[3] ?? '0')
+    if (type === 'text_search')        textSearchCount++
+    else if (type === 'place_details') placeDetailsCount++
+    totalCost += cost
+  }
+
+  return { textSearchCount, placeDetailsCount, totalCost }
+}
