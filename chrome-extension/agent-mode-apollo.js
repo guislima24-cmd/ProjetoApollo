@@ -103,7 +103,7 @@ async function apolloWaitForTab(tabId, timeoutMs = 30000) {
 }
 
 async function apolloOpenTab(url, extraDelayMs = 4000) {
-  const tab = await chrome.tabs.create({ url, active: false })
+  const tab = await chrome.tabs.create({ url, active: true })
   await apolloWaitForTab(tab.id)
   await new Promise(r => setTimeout(r, extraDelayMs))
   return tab.id
