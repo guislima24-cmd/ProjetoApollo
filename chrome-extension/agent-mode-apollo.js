@@ -126,11 +126,69 @@ function buildApolloSearchUrl(setor, portes, page = 1) {
     if (range) parts.push(`organizationNumEmployeesRanges[]=${encodeURIComponent(range)}`)
   }
 
-  // Brasil como país (GeoNames 6252001 — Apollo usa este prefixo para país)
-  parts.push('organizationLocationIds[]=6252001%7CBrazil%7Ccountry')
+  // Não inclui filtro de localização via URL — Apollo não reconhece o formato de ID externo.
+  // A localização é aplicada via interação com o DOM depois que a página carrega.
   parts.push(`page=${page}`)
 
   return `https://app.apollo.io/#/companies?${parts.join('&')}`
+}
+
+// ── Aplica filtro de localização via DOM ─────────────────────────────────────
+
+async function applyLocationFilter(tabId, localizacao) {
+  if (!localizacao) return
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (location) => {
+      // Simula digitação em input React sem perder o estado
+      function typeReact(el, value) {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+        if (setter) setter.call(el, value)
+        else el.value = value
+        el.dispatchEvent(new Event('input',  { bubbles: true }))
+        el.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+
+      // Encontra e expande a seção "Localização da conta"
+      const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'))
+      const locBtn = allButtons.find(b => {
+        const t = b.textContent?.trim() ?? ''
+        return t.includes('Localiza') || t.includes('Location') || t.includes('Account Location')
+      })
+      if (locBtn) {
+        locBtn.click()
+        // Depois de expandir, tenta preencher o input que aparece
+        setTimeout(() => {
+          const inputs = document.querySelectorAll('input[type="text"], input[placeholder]')
+          const locInput = Array.from(inputs).find(i =>
+            (i.placeholder ?? '').toLowerCase().includes('localiza') ||
+            (i.placeholder ?? '').toLowerCase().includes('location') ||
+            (i.placeholder ?? '').toLowerCase().includes('search') ||
+            (i.placeholder ?? '').toLowerCase().includes('pesquis')
+          )
+          if (locInput) typeReact(locInput, location)
+        }, 800)
+      }
+    },
+    args: [localizacao],
+  })
+
+  // Aguarda sugestões carregarem e clica na primeira
+  await new Promise(r => setTimeout(r, 2000))
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      // Clica na primeira sugestão de localização que aparecer
+      const suggestions = document.querySelectorAll(
+        '[class*="suggestion"], [class*="option"], [class*="dropdown"] li, [role="option"]'
+      )
+      if (suggestions.length > 0) suggestions[0].click()
+    },
+  })
+
+  await new Promise(r => setTimeout(r, 1500))
 }
 
 // ── Extração de empresas do Apollo ────────────────────────────────────────────
@@ -142,56 +200,61 @@ async function extractApolloCompanies(tabId) {
       const companies = []
       const seen = new Set()
 
-      // Estratégia 1: linhas de tabela com links /companies/
-      const rows = document.querySelectorAll('table tbody tr, [class*="EntityList"] tr, [class*="entity-list"] tr')
-      rows.forEach(row => {
-        const link = row.querySelector('a[href*="/companies/"]')
-        if (!link) return
+      // IDs de empresa no Apollo são strings alfanuméricas de 16–30 chars
+      const COMPANY_ID_RE = /\/companies\/([a-z0-9]{10,30})(?:[/?#]|$)/i
+
+      // Todos os links que apontam para /companies/{id}
+      const allLinks = Array.from(document.querySelectorAll('a[href*="/companies/"]'))
+
+      allLinks.forEach(link => {
         const href  = link.getAttribute('href') ?? ''
-        const id    = href.match(/\/companies\/([a-z0-9]+)/)?.[1] ?? ''
-        if (!id || seen.has(id)) return
+        const match = href.match(COMPANY_ID_RE)
+        if (!match) return
+        const id = match[1]
+        if (seen.has(id)) return
+
+        const name = link.innerText?.trim() ?? ''
+        // Ignora links com texto vazio, muito curto, muito longo ou apenas dígitos
+        if (name.length < 2 || name.length > 100) return
+        if (/^[\d\s+]+$/.test(name)) return
+
         seen.add(id)
 
-        const cells    = Array.from(row.querySelectorAll('td'))
-        const cellText = cells.map(c => c.innerText?.trim() ?? '')
+        // Tenta obter dados extras da linha/card pai
+        const row = link.closest('tr')
+          ?? link.closest('[class*="row"]')
+          ?? link.closest('[class*="entity"]')
+          ?? link.closest('[class*="company"]')
+          ?? link.parentElement?.parentElement
 
-        const websiteLink = row.querySelector('a[href^="http"]:not([href*="apollo"]):not([href*="linkedin"])')
+        let website = '', employees = '', cidade = '', telefone = ''
+
+        if (row) {
+          const siteLink = row.querySelector(
+            'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin"]):not([href*="/companies/"])'
+          )
+          if (siteLink) website = siteLink.href ?? ''
+
+          const cellText = Array.from(row.querySelectorAll('td, [class*="cell"], [class*="col"]'))
+            .map(c => c.innerText?.trim() ?? '')
+            .filter(t => t.length > 0)
+
+          employees = cellText.find(t => /\d[\d,.]*\s*[-–]\s*[\d,.]+|\d[\d,.]+\+|employees/i.test(t)) ?? ''
+          cidade    = cellText.find(t => t.length > 4 && /[,·•]|Brasil|Brazil|SP|RJ|MG|São|Rio|Bras/i.test(t)) ?? ''
+          telefone  = cellText.find(t => /^\+?[\d\s\-().]{8,}$/.test(t)) ?? ''
+        }
 
         companies.push({
-          nome:       link.innerText?.trim() ?? '',
-          apollo_url: `https://app.apollo.io${href}`,
-          website:    websiteLink?.href ?? cellText.find(t => t.includes('.')) ?? '',
-          employees:  cellText.find(t => /\d[\d,]+\s*[-–]\s*[\d,]+|\d+\+/.test(t)) ?? '',
-          setor:      '',
-          cidade:     cellText.find(t => t.length > 4 && /,|Brasil|SP|RJ|MG/.test(t)) ?? '',
-          telefone:   cellText.find(t => /^\+?[\d\s\-().]{8,}$/.test(t)) ?? '',
+          nome:         name,
+          apollo_url:   `https://app.apollo.io${href}`,
+          website,
+          employees,
+          setor:        '',
+          cidade,
+          telefone,
           linkedin_url: null,
         })
       })
-
-      // Estratégia 2: qualquer link de empresa na página se tabela vazia
-      if (companies.length === 0) {
-        document.querySelectorAll('a[href*="/companies/"]').forEach(link => {
-          const href = link.getAttribute('href') ?? ''
-          const id   = href.match(/\/companies\/([a-z0-9]+)/)?.[1] ?? ''
-          if (!id || seen.has(id)) return
-          seen.add(id)
-
-          const name = link.innerText?.trim() ?? ''
-          if (!name || name.length < 2) return
-
-          companies.push({
-            nome:       name,
-            apollo_url: `https://app.apollo.io${href}`,
-            website:    '',
-            employees:  '',
-            setor:      '',
-            cidade:     '',
-            telefone:   '',
-            linkedin_url: null,
-          })
-        })
-      }
 
       return companies
     },
@@ -293,7 +356,7 @@ async function runApolloLoop() {
   const { searchParams } = await apolloGet(['searchParams'])
   if (!searchParams) return
 
-  const { setor, portes, limite } = searchParams
+  const { setor, portes, limite, localizacao } = searchParams
   const target = Math.min(limite ?? 10, 20)
 
   const existingData = await apolloGet(['results'])
@@ -311,7 +374,7 @@ async function runApolloLoop() {
 
       // Abre Apollo com filtros
       const apolloUrl = buildApolloSearchUrl(setor, portes ?? [], page)
-      tabId = await apolloOpenTab(apolloUrl, 5000)
+      tabId = await apolloOpenTab(apolloUrl, 9000)
 
       // Verifica autenticação
       const auth = await checkApolloAuth(tabId)
@@ -319,6 +382,12 @@ async function runApolloLoop() {
         await apolloCloseTab(tabId); tabId = null
         await apolloSet({ state: 'paused', pauseReason: 'login' })
         return
+      }
+
+      // Aplica filtro de localização via DOM (se informado)
+      if (localizacao) {
+        await applyLocationFilter(tabId, localizacao)
+        await new Promise(r => setTimeout(r, 3500))
       }
 
       // Extrai lista de empresas da página

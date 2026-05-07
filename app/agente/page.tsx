@@ -98,6 +98,8 @@ export default function AgentePage() {
   const [errorMsg,    setErrorMsg]    = useState<string | null>(null)
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
 
+  const [localizacao, setLocalizacao] = useState('')
+
   // Apollo mode state
   const [apolloState,      setApolloState]      = useState<AgentState>('idle')
   const [apolloLeads,      setApolloLeads]      = useState<ApolloLead[]>([])
@@ -259,7 +261,7 @@ export default function AgentePage() {
 
     const queueRes = await sendToExt({
       type: 'APOLLO_SCRAPE_QUEUE',
-      searchParams: { setor, portes, limite },
+      searchParams: { setor, portes, limite, localizacao: localizacao.trim() || null },
     })
 
     if (!queueRes?.ok) {
@@ -438,12 +440,34 @@ export default function AgentePage() {
             </div>
           )}
 
-          {/* Apollo: nota sobre localização */}
+          {/* Apollo: filtro de localização */}
           {mode === 'apollo' && (
             <div style={{ gridColumn: '1 / -1' }}>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
-                🌐 O Apollo.io usa a localização <strong>Brasil</strong> automaticamente. Para refinar por cidade, ajuste o filtro dentro do Apollo após o agente abrir a página.
-              </p>
+              <label className="section-label">Localização (opcional)</label>
+              <input
+                className="input"
+                value={localizacao}
+                onChange={e => setLocalizacao(e.target.value)}
+                placeholder="Ex: São Paulo, Rio de Janeiro, Curitiba…"
+                style={{ width: '100%', marginTop: 8, fontSize: 13 }}
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {['São Paulo', 'Rio de Janeiro', 'Curitiba', 'Belo Horizonte', 'Porto Alegre', 'Campinas', 'Brasília', 'Brasil'].map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setLocalizacao(localizacao === c ? '' : c)}
+                    style={{
+                      padding: '4px 10px', borderRadius: 16, fontSize: 11,
+                      border: `1px solid ${localizacao === c ? '#818cf8' : 'var(--border)'}`,
+                      background: localizacao === c ? 'rgba(99,102,241,0.15)' : 'transparent',
+                      color: localizacao === c ? '#818cf8' : 'var(--text-muted)',
+                      cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
+                    }}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
