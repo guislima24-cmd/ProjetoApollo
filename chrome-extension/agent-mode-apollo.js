@@ -109,28 +109,28 @@ async function apolloOpenTab(url, extraDelayMs = 4000) {
   return tab.id
 }
 
-// Fica polling até encontrar linhas de empresa no DOM
+// Fica polling até interceptor capturar dados ou DOM ter conteúdo
 async function apolloWaitForCompanyLinks(tabId, timeoutMs = 25000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
       const result = await chrome.scripting.executeScript({
         target: { tabId },
+        world: 'MAIN',
         func: () => {
+          const intercepted  = !!(window.__zp_companies?.organizations?.length || window.__zp_companies?.accounts?.length || window.__zp_companies?.companies?.length)
           const companyLinks = document.querySelectorAll('a[href*="/companies/"]').length
-          const roleRows     = Array.from(document.querySelectorAll('[role="row"]'))
-            .filter(r => !r.querySelector('[role="columnheader"]')).length
-          const tableRows    = document.querySelectorAll('tbody tr').length
-          return { companyLinks, roleRows, tableRows, url: location.href }
+          const roleRows     = Array.from(document.querySelectorAll('[role="row"]')).filter(r => !r.querySelector('[role="columnheader"]')).length
+          return { intercepted, companyLinks, roleRows, url: location.href }
         },
       })
       const info = result?.[0]?.result ?? {}
       console.log('[apollo] wait:', JSON.stringify(info))
-      if ((info.companyLinks ?? 0) > 2 || (info.roleRows ?? 0) > 2 || (info.tableRows ?? 0) > 2) return true
+      if (info.intercepted || (info.companyLinks ?? 0) > 2 || (info.roleRows ?? 0) > 2) return true
     } catch (e) {
       console.log('[apollo] waitErr:', e?.message)
     }
-    await new Promise(r => setTimeout(r, 2500))
+    await new Promise(r => setTimeout(r, 2000))
   }
   console.log('[apollo] wait timeout')
   return false
@@ -389,50 +389,11 @@ async function scrapeWebsiteText(tabId) {
   return result?.[0]?.result ?? ''
 }
 
-// ── Extração via API interna do Apollo (mais confiável que DOM) ───────────────
-// Roda fetch DENTRO da aba do Apollo → usa cookies de sessão automaticamente
+// ── Lê dados capturados pelo apollo-interceptor.js (MAIN world) ───────────────
 
-async function fetchApolloCompaniesViaApi(tabId, keywords, ranges, page) {
-  const result = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: (keywords, ranges, page) => {
-      const body = JSON.stringify({
-        page,
-        per_page: 25,
-        q_organization_keyword_tags:    keywords,
-        organization_num_employees_ranges: ranges,
-        prospected_by_current_team: ['no'],
-      })
-      const csrf = document.querySelector('meta[name="csrf-token"]')?.content
-        ?? document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrf='))?.split('=')[1]
-        ?? ''
-      const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' }
-      if (csrf) headers['X-CSRF-Token'] = csrf
-
-      // Tenta os endpoints mais comuns do Apollo.io
-      const endpoints = [
-        '/api/v1/mixed_companies/search',
-        '/api/v1/organizations/search',
-        '/api/v1/accounts/search',
-      ]
-
-      return endpoints.reduce((p, endpoint) =>
-        p.catch(() =>
-          fetch(endpoint, { method: 'POST', headers, body, credentials: 'include' })
-            .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
-        ),
-        Promise.reject()
-      ).catch(() => null)
-    },
-    args: [keywords, ranges, page],
-  })
-
-  const data = result?.[0]?.result
+function orgsFromIntercepted(data) {
   if (!data) return []
-
   const orgs = data.organizations ?? data.accounts ?? data.companies ?? []
-  console.log('[apollo] API retornou', orgs.length, 'empresas')
-
   return orgs.map(org => ({
     nome:         org.name ?? '',
     apollo_url:   org.id ? `https://app.apollo.io/#/companies/${org.id}` : null,
@@ -443,6 +404,23 @@ async function fetchApolloCompaniesViaApi(tabId, keywords, ranges, page) {
     telefone:     org.sanitized_phone ?? org.phone ?? '',
     linkedin_url: org.linkedin_url ?? null,
   })).filter(c => c.nome.length >= 2)
+}
+
+async function readInterceptedCompanies(tabId) {
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      world:  'MAIN',
+      func:   () => {
+        const data = window.__zp_companies ?? null
+        window.__zp_companies = null  // limpa após leitura
+        return data
+      },
+    })
+    return result?.[0]?.result ?? null
+  } catch {
+    return null
+  }
 }
 
 // ── Chamada à API de enriquecimento ───────────────────────────────────────────
@@ -529,15 +507,16 @@ async function runApolloLoop() {
         return
       }
 
-      // Estratégia 1: API interna do Apollo (mais rápida e confiável)
-      const keyword = APOLLO_SECTOR_MAP[setor?.toLowerCase()] ?? setor ?? ''
-      const ranges  = (portes ?? []).map(p => APOLLO_EMPLOYEE_RANGES[p]).filter(Boolean)
-      let entries = await fetchApolloCompaniesViaApi(tabId, keyword ? [keyword] : [], ranges, page)
-      console.log('[apollo] API entries:', entries.length)
+      // Aguarda interceptor capturar dados da API ou DOM renderizar
+      await apolloWaitForCompanyLinks(tabId, 25000)
+
+      // Estratégia 1: interceptor (apollo-interceptor.js capturou a resposta JSON da API)
+      const interceptedData = await readInterceptedCompanies(tabId)
+      let entries = orgsFromIntercepted(interceptedData)
+      console.log('[apollo] interceptor entries:', entries.length)
 
       // Estratégia 2: DOM extraction (fallback)
       if (!entries.length) {
-        await apolloWaitForCompanyLinks(tabId, 20000)
         if (localizacao) {
           await applyLocationFilter(tabId, localizacao)
           await new Promise(r => setTimeout(r, 3000))
