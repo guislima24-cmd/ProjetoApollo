@@ -134,8 +134,27 @@ async function apolloWaitForCompanyLinks(tabId, timeoutMs = 25000) {
     }
     await new Promise(r => setTimeout(r, 2500))
   }
-  console.log('[apollo] waitForLinks timeout — tentando extrair mesmo assim')
+  console.log('[apollo] waitForLinks timeout')
   return false
+}
+
+// Captura snapshot diagnóstico da aba (roda no service worker, retorno visível aqui)
+async function apolloDiagnostic(tabId) {
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const companyLinks = document.querySelectorAll('a[href*="/companies/"]').length
+        const allLinks     = document.querySelectorAll('a').length
+        const hasPassword  = !!document.querySelector('input[type="password"]')
+        const bodyText     = (document.body?.innerText ?? '').replace(/\s+/g, ' ').slice(0, 400)
+        return { url: location.href, title: document.title, companyLinks, allLinks, hasPassword, bodyText }
+      },
+    })
+    return result?.[0]?.result ?? {}
+  } catch {
+    return {}
+  }
 }
 
 async function apolloCloseTab(tabId) {
@@ -234,14 +253,6 @@ async function extractApolloCompanies(tabId) {
 
       const allLinks = Array.from(document.querySelectorAll('a[href*="/companies/"]'))
 
-      console.log('[apollo-extract] total a[href*=/companies/]:', allLinks.length)
-      console.log('[apollo-extract] page url:', location.href)
-      console.log('[apollo-extract] page title:', document.title)
-      if (allLinks.length > 0) {
-        console.log('[apollo-extract] sample hrefs:', allLinks.slice(0, 4).map(l => l.getAttribute('href')))
-        console.log('[apollo-extract] sample texts:', allLinks.slice(0, 4).map(l => l.innerText?.trim()))
-      }
-
       allLinks.forEach(link => {
         const href  = link.getAttribute('href') ?? ''
         const match = href.match(COMPANY_ID_RE)
@@ -286,7 +297,6 @@ async function extractApolloCompanies(tabId) {
         companies.push({ nome: name, apollo_url: apolloUrl, website, employees, setor: '', cidade, telefone, linkedin_url: null })
       })
 
-      console.log('[apollo-extract] companies found:', companies.length, companies.slice(0,2).map(c => c.nome))
       return companies
     },
   })
@@ -428,9 +438,18 @@ async function runApolloLoop() {
 
       // Extrai lista de empresas da página
       const entries = await extractApolloCompanies(tabId)
-      await apolloCloseTab(tabId); tabId = null
 
-      if (!entries.length) break  // sem mais resultados
+      if (!entries.length) {
+        const diag = await apolloDiagnostic(tabId)
+        console.log('[apollo] 0 empresas. Diagnóstico:', JSON.stringify(diag))
+        await apolloSet({
+          errorMessage: `0 empresas encontradas. URL: ${diag.url ?? '?'} | Links /companies/: ${diag.companyLinks ?? 0} | Login: ${diag.hasPassword ?? false} | Página: "${(diag.bodyText ?? '').slice(0, 200)}"`,
+        })
+        await apolloCloseTab(tabId); tabId = null
+        break
+      }
+
+      await apolloCloseTab(tabId); tabId = null
 
       for (const entry of entries) {
         if (collected >= target) break
@@ -517,7 +536,10 @@ async function runApolloLoop() {
     if (tabId) { try { await apolloCloseTab(tabId) } catch {} }
   }
 
-  await apolloSet({ state: 'done', progress: { done: collected, total: target } })
+  await apolloSet({
+    state: collected > 0 ? 'done' : 'error',
+    progress: { done: collected, total: target },
+  })
 }
 
 // ── Listener de mensagens ─────────────────────────────────────────────────────
