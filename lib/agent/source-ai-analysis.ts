@@ -1,3 +1,5 @@
+import { analyzeWithGemini } from './gemini-client'
+
 export interface AgentAnalysis {
   potencial:           string
   justificativa:       string
@@ -6,17 +8,22 @@ export interface AgentAnalysis {
   argumento_abertura:  string
 }
 
+const FALLBACK: AgentAnalysis = {
+  potencial:          'Não analisado',
+  justificativa:      'Erro na análise de IA',
+  dores_tipicas:      [],
+  servicos_sugeridos: [],
+  argumento_abertura: '',
+}
+
 export async function analyzeCompanyForAgent(params: {
-  nome:      string
-  setor:     string
-  porte:     string
-  cidade:    string
-  industry?: string | null
+  nome:       string
+  setor:      string
+  porte:      string
+  cidade:     string
+  industry?:  string | null
   followers?: string | null
 }): Promise<AgentAnalysis | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return null
-
   const prompt = `Você é um analista de negócios da UFABC Júnior, consultoria júnior universitária especializada em projetos de engenharia, TI, gestão e marketing.
 Analise a empresa abaixo e identifique oportunidades de venda de serviços de consultoria júnior.
 
@@ -35,28 +42,9 @@ Retorne SOMENTE um JSON válido (sem blocos de código ou markdown) com esta est
 }`
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      'claude-haiku-4-5-20251001',
-        max_tokens: 600,
-        messages:   [{ role: 'user', content: prompt }],
-      }),
-    })
-
-    if (!res.ok) return null
-
-    const data = await res.json() as { content?: { text: string }[] }
-    let text = data.content?.[0]?.text ?? ''
-    text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-
-    return JSON.parse(text) as AgentAnalysis
-  } catch {
-    return null
+    return await analyzeWithGemini<AgentAnalysis>(prompt)
+  } catch (error) {
+    console.error('[GEMINI] Falha na análise LinkedIn, salvando sem IA:', (error as Error).message)
+    return FALLBACK
   }
 }

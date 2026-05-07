@@ -1,3 +1,5 @@
+import { analyzeWithGemini } from './gemini-client'
+
 export interface MapsAnalysis {
   potencial:          'alto' | 'medio' | 'baixo'
   justificativa:      string
@@ -8,6 +10,16 @@ export interface MapsAnalysis {
   argumento_abertura: string
 }
 
+const FALLBACK: MapsAnalysis = {
+  potencial:          'baixo',
+  justificativa:      'Erro na análise de IA',
+  dores_tipicas:      [],
+  servicos_sugeridos: [],
+  melhor_canal:       'ambos',
+  melhor_horario:     'ambos',
+  argumento_abertura: '',
+}
+
 export async function analyzeCompanyForMaps(params: {
   nome:     string
   tipos:    string[]
@@ -16,9 +28,6 @@ export async function analyzeCompanyForMaps(params: {
   site?:    string | null
   horario?: string | null
 }): Promise<MapsAnalysis | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return null
-
   const { nome, tipos, cidade, endereco, site, horario } = params
 
   const prompt = `Você é analista de pré-vendas da UFABC Júnior (empresa júnior de engenharia, Santo André/SP).
@@ -47,29 +56,9 @@ Valores para melhor_canal: "ligacao", "whatsapp" ou "ambos".
 Valores para melhor_horario: "manhã", "tarde" ou "ambos".`
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      'claude-haiku-4-5-20251001',
-        max_tokens: 512,
-        messages:   [{ role: 'user', content: prompt }],
-      }),
-    })
-
-    if (!res.ok) return null
-
-    const data = await res.json() as { content?: { text: string }[] }
-    let text = (data.content?.[0]?.text ?? '').replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return null
-    return JSON.parse(jsonMatch[0]) as MapsAnalysis
-  } catch {
-    return null
+    return await analyzeWithGemini<MapsAnalysis>(prompt)
+  } catch (error) {
+    console.error('[GEMINI] Falha na análise Maps, salvando sem IA:', (error as Error).message)
+    return FALLBACK
   }
 }

@@ -1,3 +1,5 @@
+import { analyzeWithGemini } from './gemini-client'
+
 export interface ApolloAnalysis {
   potencial:           string
   justificativa:       string
@@ -7,18 +9,24 @@ export interface ApolloAnalysis {
   score_fit:           number   // 1–10
 }
 
-export async function analyzeCompanyForApollo(params: {
-  nome:         string
-  setor:        string
-  porte:        string
-  cidade:       string
-  website?:     string | null
-  funcionarios?: string | null
-  resumo_site?: string | null
-}): Promise<ApolloAnalysis | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return null
+const FALLBACK: ApolloAnalysis = {
+  potencial:          'Não analisado',
+  justificativa:      'Erro na análise de IA',
+  dores_tipicas:      [],
+  servicos_sugeridos: [],
+  argumento_abertura: '',
+  score_fit:          5,
+}
 
+export async function analyzeCompanyForApollo(params: {
+  nome:          string
+  setor:         string
+  porte:         string
+  cidade:        string
+  website?:      string | null
+  funcionarios?: string | null
+  resumo_site?:  string | null
+}): Promise<ApolloAnalysis | null> {
   const contextLines = [
     `Empresa: ${params.nome}`,
     `Setor: ${params.setor}`,
@@ -50,30 +58,11 @@ Regras:
 - argumento_abertura deve ser pronto para copiar e usar`
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      'claude-sonnet-4-6',
-        max_tokens: 800,
-        messages:   [{ role: 'user', content: prompt }],
-      }),
-    })
-
-    if (!res.ok) return null
-
-    const data = await res.json() as { content?: { text: string }[] }
-    let text = data.content?.[0]?.text ?? ''
-    text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-
-    const parsed = JSON.parse(text) as ApolloAnalysis
+    const parsed = await analyzeWithGemini<ApolloAnalysis>(prompt)
     parsed.score_fit = Math.min(10, Math.max(1, Number(parsed.score_fit) || 5))
     return parsed
-  } catch {
-    return null
+  } catch (error) {
+    console.error('[GEMINI] Falha na análise Apollo, salvando sem IA:', (error as Error).message)
+    return FALLBACK
   }
 }
