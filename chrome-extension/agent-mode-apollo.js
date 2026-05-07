@@ -109,6 +109,35 @@ async function apolloOpenTab(url, extraDelayMs = 4000) {
   return tab.id
 }
 
+// Fica polling até encontrar links de empresa no DOM (Apollo é SPA lento)
+async function apolloWaitForCompanyLinks(tabId, timeoutMs = 25000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const result = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const links = Array.from(document.querySelectorAll('a[href*="/companies/"]'))
+          const valid = links.filter(l => {
+            const href = l.getAttribute('href') ?? ''
+            const name = l.innerText?.trim() ?? ''
+            return /\/companies\/[a-zA-Z0-9_-]{6,}/i.test(href) && name.length >= 2
+          })
+          return { total: links.length, valid: valid.length, url: location.href }
+        },
+      })
+      const info = result?.[0]?.result ?? {}
+      console.log('[apollo] waitForLinks:', JSON.stringify(info))
+      if ((info.valid ?? 0) > 2) return true
+    } catch (e) {
+      console.log('[apollo] waitForLinks err:', e?.message)
+    }
+    await new Promise(r => setTimeout(r, 2500))
+  }
+  console.log('[apollo] waitForLinks timeout — tentando extrair mesmo assim')
+  return false
+}
+
 async function apolloCloseTab(tabId) {
   try { await chrome.tabs.remove(tabId) } catch {}
 }
@@ -200,11 +229,18 @@ async function extractApolloCompanies(tabId) {
       const companies = []
       const seen = new Set()
 
-      // IDs de empresa no Apollo são strings alfanuméricas de 16–30 chars
-      const COMPANY_ID_RE = /\/companies\/([a-z0-9]{10,30})(?:[/?#]|$)/i
+      // Links de empresa: qualquer /companies/ seguido de ID alfanumérico
+      const COMPANY_ID_RE = /\/companies\/([a-zA-Z0-9_-]{6,40})(?:[/?#]|$)/
 
-      // Todos os links que apontam para /companies/{id}
       const allLinks = Array.from(document.querySelectorAll('a[href*="/companies/"]'))
+
+      console.log('[apollo-extract] total a[href*=/companies/]:', allLinks.length)
+      console.log('[apollo-extract] page url:', location.href)
+      console.log('[apollo-extract] page title:', document.title)
+      if (allLinks.length > 0) {
+        console.log('[apollo-extract] sample hrefs:', allLinks.slice(0, 4).map(l => l.getAttribute('href')))
+        console.log('[apollo-extract] sample texts:', allLinks.slice(0, 4).map(l => l.innerText?.trim()))
+      }
 
       allLinks.forEach(link => {
         const href  = link.getAttribute('href') ?? ''
@@ -214,17 +250,16 @@ async function extractApolloCompanies(tabId) {
         if (seen.has(id)) return
 
         const name = link.innerText?.trim() ?? ''
-        // Ignora links com texto vazio, muito curto, muito longo ou apenas dígitos
-        if (name.length < 2 || name.length > 100) return
-        if (/^[\d\s+]+$/.test(name)) return
+        if (name.length < 2 || name.length > 150) return
+        if (/^[\d\s+\-()]+$/.test(name)) return  // só números/símbolos
 
         seen.add(id)
 
-        // Tenta obter dados extras da linha/card pai
         const row = link.closest('tr')
           ?? link.closest('[class*="row"]')
           ?? link.closest('[class*="entity"]')
           ?? link.closest('[class*="company"]')
+          ?? link.closest('li')
           ?? link.parentElement?.parentElement
 
         let website = '', employees = '', cidade = '', telefone = ''
@@ -235,27 +270,23 @@ async function extractApolloCompanies(tabId) {
           )
           if (siteLink) website = siteLink.href ?? ''
 
-          const cellText = Array.from(row.querySelectorAll('td, [class*="cell"], [class*="col"]'))
+          const texts = Array.from(row.querySelectorAll('td, [class*="cell"], [class*="col"], span'))
             .map(c => c.innerText?.trim() ?? '')
-            .filter(t => t.length > 0)
+            .filter(t => t.length > 0 && t.length < 120)
 
-          employees = cellText.find(t => /\d[\d,.]*\s*[-–]\s*[\d,.]+|\d[\d,.]+\+|employees/i.test(t)) ?? ''
-          cidade    = cellText.find(t => t.length > 4 && /[,·•]|Brasil|Brazil|SP|RJ|MG|São|Rio|Bras/i.test(t)) ?? ''
-          telefone  = cellText.find(t => /^\+?[\d\s\-().]{8,}$/.test(t)) ?? ''
+          employees = texts.find(t => /\d[\d,.]*\s*[-–]\s*[\d,.]+|\d[\d,.]+\+/i.test(t)) ?? ''
+          cidade    = texts.find(t => t.length > 4 && /[,·•]|Brasil|Brazil|SP|RJ|MG|São|Rio|Bras/i.test(t)) ?? ''
+          telefone  = texts.find(t => /^\+?[\d\s\-().]{8,}$/.test(t)) ?? ''
         }
 
-        companies.push({
-          nome:         name,
-          apollo_url:   `https://app.apollo.io${href}`,
-          website,
-          employees,
-          setor:        '',
-          cidade,
-          telefone,
-          linkedin_url: null,
-        })
+        const apolloUrl = href.startsWith('http')
+          ? href
+          : `https://app.apollo.io${href.startsWith('/') ? '' : '/'}${href}`
+
+        companies.push({ nome: name, apollo_url: apolloUrl, website, employees, setor: '', cidade, telefone, linkedin_url: null })
       })
 
+      console.log('[apollo-extract] companies found:', companies.length, companies.slice(0,2).map(c => c.nome))
       return companies
     },
   })
@@ -374,7 +405,7 @@ async function runApolloLoop() {
 
       // Abre Apollo com filtros
       const apolloUrl = buildApolloSearchUrl(setor, portes ?? [], page)
-      tabId = await apolloOpenTab(apolloUrl, 9000)
+      tabId = await apolloOpenTab(apolloUrl, 4000)
 
       // Verifica autenticação
       const auth = await checkApolloAuth(tabId)
@@ -384,10 +415,15 @@ async function runApolloLoop() {
         return
       }
 
+      // Espera a lista renderizar (Apollo é SPA — status 'complete' não garante dados)
+      await apolloWaitForCompanyLinks(tabId, 25000)
+
       // Aplica filtro de localização via DOM (se informado)
       if (localizacao) {
         await applyLocationFilter(tabId, localizacao)
-        await new Promise(r => setTimeout(r, 3500))
+        await new Promise(r => setTimeout(r, 4000))
+        // Aguarda resultados recarregarem após o filtro
+        await apolloWaitForCompanyLinks(tabId, 15000)
       }
 
       // Extrai lista de empresas da página
