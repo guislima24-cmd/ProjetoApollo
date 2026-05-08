@@ -456,13 +456,13 @@ export default function AgentePage() {
       const res  = await fetch('/api/test-gemini')
       const data = await res.json() as {
         ok: boolean; error?: string; fix?: string; status?: number
-        model_tested?: string; available_flash_models?: string[]
+        model_tested?: string; flash_models?: string[]; message?: string
       }
-      const models = data.available_flash_models?.join(', ') ?? ''
+      const models = data.flash_models?.join(', ') ?? ''
       if (data.ok) {
-        setGeminiTestResult({ ok: true, msg: `✓ ${data.model_tested ?? 'Gemini'} funcionando${models ? ` | Disponíveis: ${models}` : ''}` })
+        setGeminiTestResult({ ok: true, msg: `✓ ${data.model_tested} funcionando${models ? ` | Flash disponíveis: ${models}` : ''}` })
       } else {
-        setGeminiTestResult({ ok: false, msg: `Erro ${data.status ?? ''}: ${data.fix ?? data.error ?? ''}${models ? `\nModelos disponíveis: ${models}` : ''}` })
+        setGeminiTestResult({ ok: false, msg: `${data.fix ?? data.error ?? 'Erro desconhecido'}${models ? `\nModelos flash na sua chave: ${models}` : ''}` })
       }
     } catch (err) {
       setGeminiTestResult({ ok: false, msg: `Falha na requisição: ${String(err)}` })
