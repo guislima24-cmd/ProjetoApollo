@@ -4,11 +4,11 @@ import { auth } from '@/lib/auth'
 export const dynamic = 'force-dynamic'
 
 const MODEL_CANDIDATES = [
+  'gemini-1.5-flash-8b',
+  'gemini-1.5-flash',
   'gemini-2.0-flash-lite',
   'gemini-2.5-flash-lite',
   'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash-8b',
 ]
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
@@ -20,13 +20,13 @@ export async function GET(_req: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     return Response.json({
-      ok:  false,
+      ok:    false,
       error: 'GEMINI_API_KEY ausente no .env.local',
-      fix:  'Adicione GEMINI_API_KEY=AIza... no .env.local e reinicie o servidor',
+      fix:   'Adicione GEMINI_API_KEY=AIza... no .env.local e reinicie o servidor',
     })
   }
 
-  // Passo 1: listar modelos disponíveis
+  // Listar modelos disponíveis para esta chave
   let flashModels: string[] = []
   try {
     const listRes  = await fetch(`${BASE_URL}?key=${apiKey}`)
@@ -39,7 +39,7 @@ export async function GET(_req: NextRequest) {
     console.warn('[GEMINI] Falha ao listar modelos:', err)
   }
 
-  // Passo 2: tentar candidatos — probe SEM responseMimeType (evita 400 em modelos que não suportam)
+  // Probe SEM responseMimeType (evita 400 em modelos que não suportam)
   const probeBody = JSON.stringify({
     contents: [{ parts: [{ text: 'ok' }] }],
     generationConfig: { temperature: 0, maxOutputTokens: 5 },
@@ -47,6 +47,7 @@ export async function GET(_req: NextRequest) {
 
   const tried: { model: string; status: number; snippet: string }[] = []
 
+  // Prioriza modelos que aparecem na listagem da API
   const toTry = [
     ...MODEL_CANDIDATES.filter(c => flashModels.includes(c)),
     ...MODEL_CANDIDATES.filter(c => !flashModels.includes(c)),
@@ -57,22 +58,25 @@ export async function GET(_req: NextRequest) {
     try {
       const res  = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: probeBody })
       const body = await res.text()
-      tried.push({ model, status: res.status, snippet: body.substring(0, 80) })
-      console.log(`[GEMINI] ${model} → ${res.status}: ${body.substring(0, 80)}`)
+      const quotaExceeded = res.status === 429 && body.includes('exceeded your current quota')
+      tried.push({ model, status: res.status, snippet: quotaExceeded ? 'quota diária esgotada' : body.substring(0, 80) })
+      console.log(`[GEMINI] ${model} → ${res.status}${quotaExceeded ? ' (quota esgotada)' : ''}`)
+
       if (res.ok) {
         return Response.json({ ok: true, model_tested: model, flash_models: flashModels, tried })
       }
+      if (quotaExceeded) continue // pula para o próximo modelo
     } catch (e) {
       tried.push({ model, status: 0, snippet: String(e) })
     }
   }
 
   return Response.json({
-    ok:          false,
+    ok:           false,
     flash_models: flashModels,
     tried,
     fix: flashModels.length
-      ? `Modelos na sua chave: ${flashModels.slice(0, 5).join(', ')}. Nenhum aceitou a probe — veja campo "tried" para detalhes`
+      ? `Todos os modelos com quota esgotada hoje. Aguarde até amanhã ou ative billing no Google Cloud.`
       : 'Chave sem acesso ao Gemini — ative a "Generative Language API" em console.cloud.google.com',
   })
 }

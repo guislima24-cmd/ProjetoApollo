@@ -1,19 +1,29 @@
 // Cliente Gemini Flash para análise de leads em massa
-// Tenta candidatos gratuitos em ordem até encontrar um que funcione
 // NOTA: adicionar GEMINI_API_KEY no Vercel → Settings → Environment Variables
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 
-// Candidatos em ordem de preferência (confirmados visíveis no AI Studio)
+// Candidatos em ordem: modelos com quota generosa no free tier primeiro
 const MODEL_CANDIDATES = [
-  'gemini-2.0-flash-lite',
-  'gemini-2.5-flash-lite',
+  'gemini-1.5-flash-8b',   // 1.500 req/dia, 15 RPM — melhor para volume
+  'gemini-1.5-flash',      // 1.500 req/dia, 15 RPM
+  'gemini-2.0-flash-lite', // quota menor no free tier
+  'gemini-2.5-flash-lite', // quota muito restrita no free tier
   'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash-8b',
 ]
 
-// Cache do modelo que funcionou (evita re-discovery a cada chamada)
+// Rate limiter: no máximo 1 chamada a cada 4s (respeita 15 RPM do free tier)
+let lastCallTime = 0
+async function rateLimit() {
+  const MIN_MS = 4200 // margem acima de 4s para segurança
+  const elapsed = Date.now() - lastCallTime
+  if (elapsed < MIN_MS) {
+    await new Promise(r => setTimeout(r, MIN_MS - elapsed))
+  }
+  lastCallTime = Date.now()
+}
+
+// Cache do modelo que funcionou
 let resolvedModel: string | null = null
 
 async function resolveModel(apiKey: string): Promise<string> {
@@ -22,22 +32,28 @@ async function resolveModel(apiKey: string): Promise<string> {
   for (const model of MODEL_CANDIDATES) {
     const url = `${BASE_URL}/${model}:generateContent?key=${apiKey}`
     try {
-      // Probe simples SEM responseMimeType — alguns modelos retornam 400 com ele
       const res = await fetch(url, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: 'ok' }] }],
           generationConfig: { temperature: 0, maxOutputTokens: 5 },
         }),
       })
+      const body = await res.text().catch(() => '')
+
+      // Quota esgotada = modelo existe mas limite diário atingido — pular
+      if (res.status === 429 && body.includes('exceeded your current quota')) {
+        console.log(`[GEMINI] Modelo ${model} → quota diária esgotada, tentando próximo…`)
+        continue
+      }
+      // 200 ou 429 de rate limit (RPM) = modelo funcional
       if (res.ok || res.status === 429) {
         console.log(`[GEMINI] Modelo selecionado: ${model}`)
         resolvedModel = model
         return model
       }
-      const errText = await res.text().catch(() => '')
-      console.log(`[GEMINI] Modelo ${model} → ${res.status}: ${errText.substring(0, 80)}, tentando próximo…`)
+      console.log(`[GEMINI] Modelo ${model} → ${res.status}: ${body.substring(0, 80)}, tentando próximo…`)
     } catch (e) {
       console.log(`[GEMINI] Modelo ${model} → exception: ${e}, tentando próximo…`)
     }
@@ -68,13 +84,16 @@ export async function analyzeWithGemini<T = Record<string, unknown>>(
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 1) {
-      const delay = Math.pow(2, attempt - 1) * 2000
+      const delay = Math.pow(2, attempt - 1) * 3000 // 3s, 6s, 12s
       console.log(`[GEMINI] Tentativa ${attempt}/${MAX_RETRIES} após ${delay}ms…`)
       await new Promise(r => setTimeout(r, delay))
     }
 
+    // Respeita rate limit antes de cada chamada
+    await rateLimit()
+
     const response = await fetch(url, {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
@@ -88,15 +107,20 @@ export async function analyzeWithGemini<T = Record<string, unknown>>(
 
     if (response.status === 429) {
       const body = await response.text()
+      // Quota diária esgotada = não adianta retry, trocar modelo
+      if (body.includes('exceeded your current quota')) {
+        console.error(`[GEMINI] Quota diária esgotada para ${model}`)
+        resolvedModel = null // força rediscovery com próximo modelo
+        throw new Error(`[GEMINI] Quota diária esgotada para ${model}. Tente outro modelo ou aguarde amanhã.`)
+      }
       console.warn(`[GEMINI] Rate limit (429) tentativa ${attempt}: ${body.substring(0, 200)}`)
-      lastError = new Error(`[GEMINI] Rate limit: ${response.status} — ${body.substring(0, 200)}`)
+      lastError = new Error(`[GEMINI] Rate limit: ${body.substring(0, 100)}`)
       continue
     }
 
     if (!response.ok) {
       const body = await response.text()
       console.error(`[GEMINI] Erro HTTP ${response.status}:`, body.substring(0, 500))
-      // Modelo pode ter sido revogado — força rediscovery na próxima chamada
       resolvedModel = null
       throw new Error(`[GEMINI] Erro na API (${model}): ${response.status} — ${body.substring(0, 200)}`)
     }
