@@ -8,7 +8,6 @@ export interface CsvAnalysis {
   melhor_canal:       'ligacao' | 'whatsapp' | 'ambos'
   argumento_abertura: string
   score_fit:          number
-  contatos_alvo:      string[]
 }
 
 export async function analyzeCsvLead(params: {
@@ -20,13 +19,13 @@ export async function analyzeCsvLead(params: {
   linkedin_url?:       string | null
   website_text?:       string | null
   linkedin_text?:      string | null
-  linkedin_employees?: Array<{ name: string; role: string }> | null
+  linkedin_employees?: Array<{ name: string; role: string; profile_url: string | null }> | null
 }): Promise<CsvAnalysis | null> {
   const { nome, setor, cidade, funcionarios, website, linkedin_url, website_text, linkedin_text, linkedin_employees } = params
 
   const employeesBlock = linkedin_employees?.length
     ? linkedin_employees.map(e => `${e.name}${e.role ? ` — ${e.role}` : ''}`).join('\n')
-    : '(nenhum identificado)'
+    : '(nenhum encontrado)'
 
   const prompt = `Você é analista de pré-vendas da UFABC Júnior (empresa júnior de engenharia, Santo André/SP).
 Analise a empresa abaixo e retorne APENAS JSON válido, sem markdown.
@@ -38,7 +37,7 @@ Funcionários: ${funcionarios ?? 'Não informado'}
 Site: ${website ?? 'Não informado'}
 LinkedIn: ${linkedin_url ?? 'Não informado'}
 
---- Colaboradores identificados no LinkedIn ---
+--- Decisores identificados no LinkedIn ---
 ${employeesBlock}
 
 --- Conteúdo do site ---
@@ -53,16 +52,15 @@ ${linkedin_text?.trim() || '(sem conteúdo)'}
   "dores_tipicas": ["dor 1", "dor 2"],
   "servicos_sugeridos": ["serviço EJ 1", "serviço EJ 2"],
   "melhor_canal": "ligacao",
-  "argumento_abertura": "frase de abertura para ligação fria ou WhatsApp, direta e específica",
-  "score_fit": 8,
-  "contatos_alvo": ["Nome Sobrenome — Cargo (LinkedIn)", "Cargo a buscar (sugestão)"]
+  "argumento_abertura": "frase de abertura personalizada para o decisor identificado acima, direta e específica",
+  "score_fit": 8
 }
 
 Serviços UFABC Júnior: consultoria em processos, projetos de engenharia, análise de dados, automação, pesquisa de mercado, desenvolvimento de produtos, estudos de viabilidade.
 Valores para potencial: "alto", "medio" ou "baixo".
 Valores para melhor_canal: "ligacao", "whatsapp" ou "ambos".
-score_fit: número inteiro de 1 a 10 (10 = fit perfeito com UFABC Júnior).
-contatos_alvo: liste até 3 contatos ideais para prospecção. Se há colaboradores reais acima, priorize-os com formato "Nome — Cargo (LinkedIn)". Complete com cargos típicos a buscar nessa empresa: "Cargo (sugestão)". Foque em decisores: CEO, sócio, diretor, gerente.`
+score_fit: número inteiro de 1 a 10 (10 = fit perfeito).
+argumento_abertura: se há decisores identificados acima, personalize a frase usando o nome e cargo do decisor mais relevante.`
 
   return await analyzeWithGemini<CsvAnalysis>(prompt)
 }

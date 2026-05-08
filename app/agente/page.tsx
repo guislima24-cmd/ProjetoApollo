@@ -86,6 +86,12 @@ interface CsvCompany {
   email:         string | null
 }
 
+interface CsvEmployee {
+  name:        string
+  role:        string
+  profile_url: string | null
+}
+
 interface CsvLead extends CsvCompany {
   potencial:          string | null
   score_fit:          number | null
@@ -94,7 +100,7 @@ interface CsvLead extends CsvCompany {
   servicos_sugeridos: string[]
   melhor_canal:       string | null
   argumento_abertura: string | null
-  contatos_alvo:      string[]
+  linkedin_employees: CsvEmployee[]
   ok:                 boolean
 }
 
@@ -1938,26 +1944,26 @@ export default function AgentePage() {
                             {lead.servicos_sugeridos.map((s, i) => <p key={i} style={{ fontSize: 12, color: '#f97316', margin: '3px 0' }}>✓ {s}</p>)}
                           </div>
                         )}
-                        {(lead.contatos_alvo?.length ?? 0) > 0 && (
+                        {(lead.linkedin_employees?.length ?? 0) > 0 && (
                           <div style={{ gridColumn: '1 / -1' }}>
-                            <p className="section-label" style={{ marginBottom: 8 }}>Contatos sugeridos para prospecção</p>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                              {lead.contatos_alvo.map((c, i) => {
-                                const isLinkedIn = c.includes('(LinkedIn)')
-                                return (
-                                  <span key={i} style={{
-                                    fontSize: 12,
-                                    padding: '4px 10px',
-                                    borderRadius: 20,
-                                    background: isLinkedIn ? 'rgba(10,102,194,0.15)' : 'rgba(249,115,22,0.12)',
-                                    color: isLinkedIn ? '#4fa3e0' : '#f97316',
-                                    border: `1px solid ${isLinkedIn ? 'rgba(10,102,194,0.3)' : 'rgba(249,115,22,0.3)'}`,
-                                    fontWeight: isLinkedIn ? 600 : 400,
-                                  }}>
-                                    {isLinkedIn ? '👤 ' : '🔍 '}{c}
-                                  </span>
-                                )
-                              })}
+                            <p className="section-label" style={{ marginBottom: 8 }}>Decisores para prospecção</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {lead.linkedin_employees.map((e, i) => (
+                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 8, border: '1px solid rgba(10,102,194,0.2)' }}>
+                                  <span style={{ fontSize: 15, flexShrink: 0 }}>👤</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <span style={{ fontSize: 13, color: 'var(--cream)', fontWeight: 600 }}>{e.name}</span>
+                                    {e.role && <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>— {e.role}</span>}
+                                  </div>
+                                  {e.profile_url && (
+                                    <a href={e.profile_url} target="_blank" rel="noreferrer"
+                                      onClick={ev => ev.stopPropagation()}
+                                      style={{ fontSize: 12, color: '#4fa3e0', whiteSpace: 'nowrap', flexShrink: 0, padding: '3px 8px', border: '1px solid rgba(79,163,224,0.3)', borderRadius: 12 }}>
+                                      LinkedIn ↗
+                                    </a>
+                                  )}
+                                </div>
+                              ))}
                             </div>
                           </div>
                         )}

@@ -23,29 +23,36 @@ export async function POST(req: NextRequest) {
     email?:              string | null
     website_text?:       string | null
     linkedin_text?:      string | null
-    linkedin_employees?: Array<{ name: string; role: string }> | null
+    linkedin_employees?: Array<{ name: string; role: string; profile_url: string | null }> | null
   }
 
   if (!body.nome) {
     return Response.json({ error: 'nome é obrigatório' }, { status: 400 })
   }
 
+  const linkedin_employees = body.linkedin_employees ?? []
+
   let analysis: Awaited<ReturnType<typeof analyzeCsvLead>> = null
   try {
     analysis = await analyzeCsvLead({
-      nome:                body.nome,
-      setor:               body.setor,
-      cidade:              body.cidade,
-      funcionarios:        body.funcionarios,
-      website:             body.website,
-      linkedin_url:        body.linkedin_url,
-      website_text:        body.website_text,
-      linkedin_text:       body.linkedin_text,
-      linkedin_employees:  body.linkedin_employees,
+      nome:               body.nome,
+      setor:              body.setor,
+      cidade:             body.cidade,
+      funcionarios:       body.funcionarios,
+      website:            body.website,
+      linkedin_url:       body.linkedin_url,
+      website_text:       body.website_text,
+      linkedin_text:      body.linkedin_text,
+      linkedin_employees,
     })
   } catch (err) {
     console.error('[process-csv] Gemini error:', err)
   }
+
+  // Formata os decisores para salvar no Sheets (coluna Q)
+  const contatos_sheets = linkedin_employees
+    .map(e => `${e.name}${e.role ? ` — ${e.role}` : ''}`)
+    .join('; ')
 
   let rowNum: number | null = null
   try {
@@ -65,7 +72,7 @@ export async function POST(req: NextRequest) {
       servicos_sugeridos: analysis?.servicos_sugeridos  ?? [],
       melhor_canal:       analysis?.melhor_canal         ?? null,
       argumento_abertura: analysis?.argumento_abertura  ?? null,
-      contatos_alvo:      analysis?.contatos_alvo       ?? [],
+      contatos_alvo:      contatos_sheets ? [contatos_sheets] : [],
       memberTab,
     })
   } catch (err) {
@@ -88,7 +95,7 @@ export async function POST(req: NextRequest) {
     servicos_sugeridos: analysis?.servicos_sugeridos  ?? [],
     melhor_canal:       analysis?.melhor_canal         ?? null,
     argumento_abertura: analysis?.argumento_abertura  ?? null,
-    contatos_alvo:      analysis?.contatos_alvo       ?? [],
+    linkedin_employees,
     ok:                 !!analysis,
   }
 

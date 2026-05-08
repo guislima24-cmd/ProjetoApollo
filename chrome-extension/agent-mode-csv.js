@@ -58,20 +58,15 @@ async function csvCloseTab(tabId) {
   try { await chrome.tabs.remove(tabId) } catch {}
 }
 
-// ── LinkedIn company page scraping ────────────────────────────────────────────
+// ── LinkedIn company page — texto de about ───────────────────────────────────
 
-async function scrapeLinkedIn(tabId) {
+async function scrapeLinkedInAbout(tabId) {
   try {
     const result = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
-        if (document.querySelector('input[name="session_key"]') || document.querySelector('.login__form')) {
-          return { text: '', employees: [] }
-        }
+        if (document.querySelector('input[name="session_key"]') || document.querySelector('.login__form')) return ''
         document.querySelectorAll('script,style,nav,header,footer,aside,iframe').forEach(el => el.remove())
-
-        // About text
-        let text = ''
         const sections = [
           '.org-about-us-organization-description__text',
           '.organization-about-us',
@@ -81,44 +76,97 @@ async function scrapeLinkedIn(tabId) {
         ]
         for (const sel of sections) {
           const el = document.querySelector(sel)
-          if (el) { text = (el.innerText ?? '').slice(0, 2000); break }
+          if (el) return (el.innerText ?? '').slice(0, 2000)
         }
-        if (!text) text = (document.body?.innerText ?? '').slice(0, 2000)
-
-        // Tenta extrair colaboradores visíveis na página da empresa
-        const employees = []
-        const empSelectors = [
-          '.org-people-profiles-module__profile-list li',
-          '[data-test-id*="profile-card"]',
-          '[class*="org-people-profile-card"]',
-          '.artdeco-entity-lockup',
-        ]
-        for (const sel of empSelectors) {
-          const cards = document.querySelectorAll(sel)
-          if (cards.length > 0) {
-            cards.forEach(card => {
-              const name = (
-                card.querySelector('[class*="profile-title"], [class*="lockup__title"], .artdeco-entity-lockup__title')
-                  ?.innerText?.trim()?.split('\n')[0] ?? ''
-              )
-              const role = (
-                card.querySelector('[class*="profile-position"], [class*="lockup__subtitle"], .artdeco-entity-lockup__subtitle')
-                  ?.innerText?.trim()?.split('\n')[0] ?? ''
-              )
-              if (name && name.length > 1 && name.length < 60) {
-                employees.push({ name, role })
-              }
-            })
-            break
-          }
-        }
-
-        return { text, employees: employees.slice(0, 6) }
+        return (document.body?.innerText ?? '').slice(0, 2000)
       },
     })
-    return result?.[0]?.result ?? { text: '', employees: [] }
+    return result?.[0]?.result ?? ''
   } catch {
-    return { text: '', employees: [] }
+    return ''
+  }
+}
+
+// ── LinkedIn /people — decisores reais com perfil URL ────────────────────────
+
+const DECISION_KEYWORDS = [
+  'ceo', 'cto', 'cfo', 'coo', 'diretor', 'diretora', 'director',
+  'sócio', 'socia', 'socio', 'fundador', 'fundadora', 'founder',
+  'presidente', 'president', 'gerente', 'manager', 'head of', 'head ',
+  'vp ', 'vice-president', 'vice-presidente', 'superintendente',
+  'partner', 'coordenador', 'coordenadora',
+]
+
+function isDecisionMaker(role) {
+  const r = (role ?? '').toLowerCase()
+  return DECISION_KEYWORDS.some(k => r.includes(k))
+}
+
+async function scrapeLinkedInPeople(tabId) {
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (decisionKeywords) => {
+        if (document.querySelector('input[name="session_key"]') || document.querySelector('.login__form')) return []
+
+        function isDM(role) {
+          const r = (role ?? '').toLowerCase()
+          return decisionKeywords.some(k => r.includes(k))
+        }
+
+        const seen = new Set()
+        const employees = []
+
+        // Estratégia: todos os links /in/ na página (perfis de pessoas)
+        document.querySelectorAll('a[href*="/in/"]').forEach(link => {
+          const href = (link.href ?? '').split('?')[0]
+          if (!href.includes('/in/') || href.endsWith('/in/')) return
+
+          const profileUrl = href.endsWith('/') ? href : href + '/'
+          if (seen.has(profileUrl)) return
+
+          // Sobe na DOM para achar o card que contém este link
+          const card = link.closest('li, [class*="card"], [class*="profile-card"], [class*="lockup"], article')
+            ?? link.parentElement
+
+          if (!card) return
+
+          // Nome: texto direto do link ou do elemento de título no card
+          const titleEl = card.querySelector('[class*="title"], [class*="name"], [class*="lockup__title"]')
+          let name = (titleEl?.innerText?.trim()?.split('\n')[0] ?? link.innerText?.trim()?.split('\n')[0] ?? '').trim()
+
+          // Role: subtítulo do card
+          const subtitleEl = card.querySelector('[class*="subtitle"], [class*="position"], [class*="lockup__subtitle"]')
+          let role = (subtitleEl?.innerText?.trim()?.split('\n')[0] ?? '').trim()
+
+          // Fallback: pegar todos os textos do card
+          if (!name || name.length < 2) {
+            const texts = Array.from(card.querySelectorAll('span, div'))
+              .map(el => el.childNodes.length === 1 && el.childNodes[0].nodeType === 3
+                ? (el.childNodes[0].textContent ?? '').trim()
+                : (el.innerText ?? '').trim().split('\n')[0])
+              .filter(t => t.length > 1 && t.length < 80 && !/^(ver|view|connect|seguir|follow|message|mensagem)/i.test(t))
+            if (texts[0]) name = texts[0]
+            if (!role && texts[1]) role = texts[1]
+          }
+
+          if (!name || name.length < 2 || name.length > 70) return
+          seen.add(profileUrl)
+          employees.push({ name, role: role || '', profile_url: profileUrl, dm: isDM(role) })
+        })
+
+        // Decisores primeiro, depois os demais; máximo 8
+        employees.sort((a, b) => (b.dm ? 1 : 0) - (a.dm ? 1 : 0))
+        const top = employees.filter(e => e.dm).length > 0
+          ? employees.filter(e => e.dm)
+          : employees
+        return top.slice(0, 5).map(({ name, role, profile_url }) => ({ name, role, profile_url }))
+      },
+      args: [DECISION_KEYWORDS],
+    })
+    return result?.[0]?.result ?? []
+  } catch {
+    return []
   }
 }
 
@@ -162,13 +210,23 @@ async function runCsvLoop() {
       let linkedin_employees = []
       let website_text       = ''
 
-      // 1. Scrape LinkedIn (se URL disponível)
+      // 1. Scrape LinkedIn: about text + navega para /people para decisores
       if (company.linkedin_url) {
         try {
-          tabId = await csvOpenTab(company.linkedin_url, 3000)
-          const liResult = await scrapeLinkedIn(tabId)
-          linkedin_text      = liResult.text      ?? ''
-          linkedin_employees = liResult.employees ?? []
+          const baseUrl = company.linkedin_url.replace(/\/+$/, '')
+          tabId = await csvOpenTab(baseUrl, 3000)
+
+          // About text na página principal da empresa
+          linkedin_text = await scrapeLinkedInAbout(tabId)
+
+          // Navega para /people no mesmo tab
+          const peopleUrl = baseUrl + '/people/'
+          await chrome.tabs.update(tabId, { url: peopleUrl })
+          await csvWaitForTab(tabId)
+          await new Promise(r => setTimeout(r, 3500))
+          linkedin_employees = await scrapeLinkedInPeople(tabId)
+
+          console.log(`[CSV_AGENT] LinkedIn ${company.nome}: ${linkedin_employees.length} decisores`)
           await csvCloseTab(tabId); tabId = null
           await new Promise(r => setTimeout(r, randomDelay()))
         } catch (e) {
