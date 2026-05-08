@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 
 type AgentState = 'idle' | 'scraping' | 'paused' | 'done' | 'error'
-type AgentMode  = 'linkedin' | 'apollo' | 'maps'
+type AgentMode  = 'linkedin' | 'apollo' | 'maps' | 'csv'
 
 interface DecisionMaker {
   name:        string
@@ -71,6 +71,28 @@ interface MapsLead {
   servicos_sugeridos: string[]
   melhor_canal:       string | null
   melhor_horario:     string | null
+  argumento_abertura: string | null
+  ok:                 boolean
+}
+
+interface CsvCompany {
+  nome:          string
+  setor:         string | null
+  cidade:        string | null
+  funcionarios:  string | null
+  website:       string | null
+  linkedin_url:  string | null
+  telefone:      string | null
+  email:         string | null
+}
+
+interface CsvLead extends CsvCompany {
+  potencial:          string | null
+  score_fit:          number | null
+  justificativa:      string | null
+  dores_tipicas:      string[]
+  servicos_sugeridos: string[]
+  melhor_canal:       string | null
   argumento_abertura: string | null
   ok:                 boolean
 }
@@ -156,6 +178,15 @@ export default function AgentePage() {
   const [mapsLimite,   setMapsLimite]   = useState(20)
   const [mapsUseAI,    setMapsUseAI]    = useState(true)
 
+  // CSV mode state
+  const [csvState,       setCsvState]       = useState<AgentState>('idle')
+  const [csvLeads,       setCsvLeads]       = useState<CsvLead[]>([])
+  const [csvProgress,    setCsvProgress]    = useState({ done: 0, total: 0 })
+  const [csvErrorMsg,    setCsvErrorMsg]    = useState<string | null>(null)
+  const [csvExpandedIdx, setCsvExpandedIdx] = useState<number | null>(null)
+  const [csvFile,        setCsvFile]        = useState<File | null>(null)
+  const [csvParsed,      setCsvParsed]      = useState<CsvCompany[]>([])
+
   // Maps usage widget
   const [mapsUsage, setMapsUsage] = useState<{
     totalCost:        number
@@ -169,9 +200,12 @@ export default function AgentePage() {
     apiKeyConfigured: boolean
   } | null>(null)
 
-  const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null)
-  const apolloPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const mapsAbortRef  = useRef<AbortController | null>(null)
+  const pollRef          = useRef<ReturnType<typeof setInterval> | null>(null)
+  const apolloPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
+  const mapsAbortRef     = useRef<AbortController | null>(null)
+  const csvPollRef       = useRef<ReturnType<typeof setInterval> | null>(null)
+  const csvQueueRef      = useRef<CsvCompany[]>([])
+  const csvProcessingRef = useRef(false)
 
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login')
@@ -471,12 +505,184 @@ export default function AgentePage() {
     }
   }
 
+  // ── CSV mode helpers ─────────────────────────────────────────────────────────
+
+  function parseCSVRow(line: string): string[] {
+    const result: string[] = []
+    let current = ''
+    let inQuotes = false
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { current += '"'; i++ }
+        else inQuotes = !inQuotes
+      } else if (ch === ',' && !inQuotes) {
+        result.push(current.trim())
+        current = ''
+      } else {
+        current += ch
+      }
+    }
+    result.push(current.trim())
+    return result
+  }
+
+  function parseApolloCsv(text: string): CsvCompany[] {
+    const cleaned = text.replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    const lines = cleaned.trim().split('\n')
+    if (lines.length < 2) return []
+
+    const headers = parseCSVRow(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9# ]/g, '').trim())
+
+    const find = (...names: string[]) => {
+      for (const name of names) {
+        const idx = headers.findIndex(h => h.includes(name))
+        if (idx >= 0) return idx
+      }
+      return -1
+    }
+
+    const cols = {
+      nome:        find('company name', 'company', 'name'),
+      linkedin:    find('company linkedin', 'linkedin url', 'linkedin'),
+      website:     find('website'),
+      setor:       find('industry'),
+      funcionarios: find('# employees', 'employees', 'headcount'),
+      cidade:      find('city'),
+      estado:      find('state'),
+      telefone:    find('phone', 'direct phone', 'corporate phone'),
+      email:       find('email'),
+    }
+
+    return lines.slice(1)
+      .filter(l => l.trim())
+      .map(line => parseCSVRow(line))
+      .filter(row => (row[cols.nome] ?? '').trim().length >= 2)
+      .map(row => ({
+        nome:         (row[cols.nome]        ?? '').trim(),
+        linkedin_url: cols.linkedin  >= 0 ? (row[cols.linkedin]    ?? '').trim() || null : null,
+        website:      cols.website   >= 0 ? (row[cols.website]     ?? '').trim() || null : null,
+        setor:        cols.setor     >= 0 ? (row[cols.setor]       ?? '').trim() || null : null,
+        funcionarios: cols.funcionarios >= 0 ? (row[cols.funcionarios] ?? '').trim() || null : null,
+        cidade:       [
+          cols.cidade  >= 0 ? (row[cols.cidade]  ?? '').trim() : '',
+          cols.estado  >= 0 ? (row[cols.estado]  ?? '').trim() : '',
+        ].filter(Boolean).join(', ') || null,
+        telefone:     cols.telefone  >= 0 ? (row[cols.telefone]    ?? '').trim() || null : null,
+        email:        cols.email     >= 0 ? (row[cols.email]       ?? '').trim() || null : null,
+      }))
+  }
+
+  function handleCsvFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null
+    setCsvFile(file)
+    setCsvParsed([])
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const text = ev.target?.result as string
+      const companies = parseApolloCsv(text)
+      setCsvParsed(companies)
+    }
+    reader.readAsText(file, 'utf-8')
+  }
+
+  async function processCsvQueue() {
+    if (csvProcessingRef.current) return
+    csvProcessingRef.current = true
+    while (csvQueueRef.current.length > 0) {
+      const company = csvQueueRef.current.shift()!
+      try {
+        const apiRes = await fetch('/api/agent/process-csv', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(company),
+        })
+        if (apiRes.ok) {
+          const data = await apiRes.json() as { lead?: CsvLead }
+          if (data.lead) setCsvLeads(prev => [...prev, data.lead!])
+        }
+      } catch (err) {
+        console.error('[CSV] process-csv error:', err)
+      }
+    }
+    csvProcessingRef.current = false
+  }
+
+  function startCsvPolling() {
+    if (csvPollRef.current) clearInterval(csvPollRef.current)
+    csvPollRef.current = setInterval(async () => {
+      const res = await sendToExt({ type: 'CSV_GET_RESULTS' })
+      if (!res?.ok) return
+
+      setCsvProgress(res.progress ?? { done: 0, total: 0 })
+
+      if (res.results?.length) {
+        csvQueueRef.current.push(...res.results)
+        processCsvQueue()
+      }
+
+      if (res.state === 'done' || res.state === 'error') {
+        clearInterval(csvPollRef.current!)
+        csvPollRef.current = null
+        setCsvState(res.state === 'done' ? 'done' : 'error')
+        if (res.errorMessage) setCsvErrorMsg(res.errorMessage)
+      }
+    }, 2000)
+  }
+
+  async function handleCsvStart() {
+    if (!extId || extStatus !== 'connected' || !csvParsed.length) return
+
+    setCsvLeads([])
+    setCsvProgress({ done: 0, total: csvParsed.length })
+    setCsvErrorMsg(null)
+    setCsvExpandedIdx(null)
+    csvQueueRef.current = []
+    csvProcessingRef.current = false
+    setCsvState('scraping')
+
+    const res = await sendToExt({ type: 'CSV_PROCESS_QUEUE', queue: csvParsed })
+    if (!res?.ok) {
+      setCsvErrorMsg(res?.error ?? 'Erro ao enviar fila para a extensão.')
+      setCsvState('error')
+      return
+    }
+
+    setCsvProgress({ done: 0, total: res.total ?? csvParsed.length })
+    startCsvPolling()
+  }
+
+  async function handleCsvPause() {
+    await sendToExt({ type: 'CSV_PAUSE' })
+    setCsvState('paused')
+    if (csvPollRef.current) { clearInterval(csvPollRef.current); csvPollRef.current = null }
+  }
+
+  async function handleCsvResume() {
+    await sendToExt({ type: 'CSV_RESUME' })
+    setCsvState('scraping')
+    startCsvPolling()
+  }
+
+  async function handleCsvClear() {
+    await sendToExt({ type: 'CSV_CLEAR' })
+    setCsvLeads([])
+    setCsvProgress({ done: 0, total: 0 })
+    setCsvState('idle')
+    setCsvErrorMsg(null)
+    setCsvExpandedIdx(null)
+    csvQueueRef.current = []
+    if (csvPollRef.current) { clearInterval(csvPollRef.current); csvPollRef.current = null }
+  }
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (mode === 'maps') fetchMapsUsage() }, [mode])
 
   useEffect(() => () => {
     if (pollRef.current)      clearInterval(pollRef.current)
     if (apolloPollRef.current) clearInterval(apolloPollRef.current)
+    if (csvPollRef.current)   clearInterval(csvPollRef.current)
     mapsAbortRef.current?.abort()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -486,6 +692,7 @@ export default function AgentePage() {
   const canStart       = !!setor && regioes.length > 0 && extStatus === 'connected'
   const canApolloStart = !!setor && extStatus === 'connected'
   const canMapsStart   = !!mapsSetor && mapsCidades.length > 0 && mapsState !== 'scraping' && !mapsUsage?.blocked
+  const canCsvStart    = csvParsed.length > 0 && extStatus === 'connected' && csvState !== 'scraping'
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 20px' }}>
@@ -502,22 +709,26 @@ export default function AgentePage() {
       </div>
 
       {/* Seletor de modo */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {(['linkedin', 'apollo', 'maps'] as AgentMode[]).map(m => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            style={{
-              padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              border: `1px solid ${mode === m ? (m === 'maps' ? '#14b8a6' : 'var(--green-primary)') : 'var(--border)'}`,
-              background: mode === m ? (m === 'maps' ? 'rgba(20,184,166,0.18)' : 'rgba(49,112,57,0.18)') : 'transparent',
-              color: mode === m ? (m === 'maps' ? '#14b8a6' : 'var(--green-primary)') : 'var(--text-muted)',
-              cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
-            }}
-          >
-            {m === 'linkedin' ? '🔗 LinkedIn' : m === 'apollo' ? '🚀 Apollo.io' : '🗺️ Google Maps'}
-          </button>
-        ))}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+        {(['linkedin', 'apollo', 'maps', 'csv'] as AgentMode[]).map(m => {
+          const isActive = mode === m
+          const color = m === 'maps' ? '#14b8a6' : m === 'csv' ? '#f97316' : 'var(--green-primary)'
+          return (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              style={{
+                padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                border: `1px solid ${isActive ? color : 'var(--border)'}`,
+                background: isActive ? `${color}2e` : 'transparent',
+                color: isActive ? color : 'var(--text-muted)',
+                cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
+              }}
+            >
+              {m === 'linkedin' ? '🔗 LinkedIn' : m === 'apollo' ? '🚀 Apollo.io' : m === 'maps' ? '🗺️ Google Maps' : '📄 Apollo CSV'}
+            </button>
+          )
+        })}
       </div>
 
       {/* Conexão com extensão */}
@@ -580,7 +791,7 @@ export default function AgentePage() {
 
       {/* Filtros (compartilhados entre modos) */}
       <div className="card" style={{ marginBottom: 20 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
+        <div style={{ display: mode === 'csv' ? 'none' : 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
 
           {/* Setor */}
           <div>
@@ -991,6 +1202,116 @@ export default function AgentePage() {
                 🗑 Limpar
               </button>
             )}
+          </div>
+        )}
+
+        {/* Apollo CSV — upload e controles */}
+        {mode === 'csv' && (
+          <div>
+            <div style={{ fontSize: 12, color: '#f97316', marginBottom: 14, fontWeight: 600 }}>
+              📄 Upload do CSV exportado do Apollo.io — a extensão irá raspar LinkedIn + site de cada empresa.
+            </div>
+
+            <label className="section-label">Arquivo CSV do Apollo.io *</label>
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleCsvFileChange}
+              style={{
+                display: 'block', marginTop: 8, fontSize: 13,
+                color: 'var(--text-secondary)', fontFamily: 'DM Sans, sans-serif',
+                width: '100%',
+              }}
+            />
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
+              No Apollo.io: Pesquisa de empresas → selecione todas → Export → CSV. O agente usará as colunas
+              <em> Company Name, Company LinkedIn Url, Website, Industry, # Employees, City, State, Phone.</em>
+            </p>
+
+            {csvParsed.length > 0 && (
+              <div style={{
+                marginTop: 12, padding: '10px 14px', borderRadius: 8,
+                background: 'rgba(249,115,22,0.07)', border: '1px solid rgba(249,115,22,0.25)',
+              }}>
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#f97316', margin: '0 0 6px' }}>
+                  ✓ {csvParsed.length} empresa{csvParsed.length !== 1 ? 's' : ''} detectada{csvParsed.length !== 1 ? 's' : ''}
+                </p>
+                <div style={{ maxHeight: 140, overflowY: 'auto' }}>
+                  {csvParsed.slice(0, 30).map((c, i) => (
+                    <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '2px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ color: 'var(--cream)', fontWeight: 600, minWidth: 20 }}>{i + 1}.</span>
+                      <span>{c.nome}</span>
+                      {c.setor && <span style={{ color: 'var(--text-muted)' }}>· {c.setor}</span>}
+                      {c.cidade && <span style={{ color: 'var(--text-muted)' }}>· {c.cidade}</span>}
+                      {c.linkedin_url && <span style={{ color: '#f97316', fontSize: 10 }}>LI</span>}
+                      {c.website     && <span style={{ color: '#f97316', fontSize: 10 }}>WEB</span>}
+                    </div>
+                  ))}
+                  {csvParsed.length > 30 && (
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+                      + {csvParsed.length - 30} mais…
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+              {(csvState === 'idle' || csvState === 'done' || csvState === 'error') && (
+                <button
+                  onClick={handleCsvStart}
+                  disabled={!canCsvStart}
+                  style={{
+                    padding: '9px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                    background: canCsvStart ? '#f97316' : 'var(--border)',
+                    color: canCsvStart ? '#fff' : 'var(--text-muted)',
+                    border: 'none', cursor: canCsvStart ? 'pointer' : 'not-allowed',
+                    fontFamily: 'DM Sans, sans-serif',
+                  }}
+                >
+                  {csvState === 'idle' ? '📄 Processar CSV' : '📄 Novo CSV'}
+                </button>
+              )}
+
+              {csvState === 'scraping' && (
+                <button className="btn-secondary" onClick={handleCsvPause}>⏸ Pausar</button>
+              )}
+
+              {csvState === 'paused' && (
+                <>
+                  <button
+                    onClick={handleCsvResume}
+                    style={{
+                      padding: '9px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                      background: '#f97316', color: '#fff', border: 'none', cursor: 'pointer',
+                      fontFamily: 'DM Sans, sans-serif',
+                    }}
+                  >
+                    ▶ Retomar
+                  </button>
+                  <span style={{ fontSize: 12, color: '#f59e0b' }}>⏸ Processamento pausado</span>
+                </>
+              )}
+
+              {!canCsvStart && csvParsed.length === 0 && (
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {extStatus !== 'connected' ? '⚠ Extensão não conectada' : 'Faça upload de um CSV para começar'}
+                </span>
+              )}
+
+              {csvLeads.length > 0 && csvState !== 'scraping' && (
+                <button
+                  onClick={handleCsvClear}
+                  style={{
+                    marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)',
+                    color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 7,
+                    fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans',
+                  }}
+                >
+                  🗑 Limpar
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1454,6 +1775,165 @@ export default function AgentePage() {
                 {mapsState === 'idle'
                   ? 'Selecione o setor e as cidades para descobrir leads via Google Maps.'
                   : 'Nenhum lead retornado. Verifique a API key e os filtros selecionados.'}
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── MODO CSV ──────────────────────────────────────────────── */}
+      {mode === 'csv' && (
+        <>
+          {csvProgress.total > 0 && (
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                <span>
+                  {csvState === 'scraping' && (
+                    <><span className="spinner" style={{ display: 'inline-block', width: 11, height: 11, marginRight: 6 }} />Raspando LinkedIn + sites…</>
+                  )}
+                  {csvState === 'paused' && '⏸ Pausado'}
+                  {csvState === 'done'   && '✓ Concluído'}
+                  {csvState === 'error'  && '⚠ Finalizado com erros'}
+                </span>
+                <span style={{ fontWeight: 600 }}>{csvProgress.done} / {csvProgress.total}</span>
+              </div>
+              <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 2, background: '#f97316',
+                  width: `${csvProgress.total > 0 ? Math.round((csvProgress.done / csvProgress.total) * 100) : 0}%`,
+                  transition: 'width 0.4s',
+                }} />
+              </div>
+              {csvLeads.length < csvProgress.done && csvState === 'scraping' && (
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Análise IA em andamento… {csvLeads.length} de {csvProgress.done} analisados
+                </p>
+              )}
+            </div>
+          )}
+
+          {csvState === 'error' && csvErrorMsg && (
+            <div className="card" style={{ marginBottom: 16, border: '1px solid #ef4444', background: 'rgba(239,68,68,0.07)', padding: '12px 16px' }}>
+              <p style={{ fontSize: 13, color: '#ef4444', margin: 0 }}>⚠ {csvErrorMsg}</p>
+            </div>
+          )}
+
+          {csvLeads.length > 0 && (
+            <div>
+              <p className="section-label" style={{ marginBottom: 12 }}>
+                {csvLeads.length} empresa{csvLeads.length !== 1 ? 's' : ''} analisada{csvLeads.length !== 1 ? 's' : ''} via Apollo CSV
+              </p>
+
+              {csvLeads.map((lead, idx) => (
+                <div
+                  key={`${lead.nome}-${idx}`}
+                  className="card fade-in"
+                  style={{ marginBottom: 10, cursor: 'pointer', padding: '14px 18px' }}
+                  onClick={() => setCsvExpandedIdx(csvExpandedIdx === idx ? null : idx)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, color: 'var(--cream)', fontSize: 14 }}>{lead.nome}</span>
+                        {lead.potencial && (
+                          <span className="badge" style={{
+                            background: potencialColor(lead.potencial) + '22',
+                            color:      potencialColor(lead.potencial),
+                            border:     `1px solid ${potencialColor(lead.potencial)}44`,
+                            fontSize: 11,
+                          }}>
+                            {lead.potencial}
+                          </span>
+                        )}
+                        {lead.score_fit != null && (
+                          <span className="badge" style={{
+                            background: 'rgba(249,115,22,0.12)', color: '#f97316',
+                            border: '1px solid rgba(249,115,22,0.3)', fontSize: 11,
+                          }}>
+                            Fit {lead.score_fit}/10
+                          </span>
+                        )}
+                        {!lead.ok && (
+                          <span className="badge" style={{
+                            background: 'rgba(239,68,68,0.1)', color: '#ef4444',
+                            border: '1px solid rgba(239,68,68,0.2)', fontSize: 11,
+                          }}>sem análise IA</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+                        {lead.setor}{lead.cidade ? ` · ${lead.cidade}` : ''}
+                        {lead.funcionarios ? ` · ${lead.funcionarios} func.` : ''}
+                        {lead.website ? ` · ${lead.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}
+                      </div>
+                    </div>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11, flexShrink: 0 }}>
+                      {csvExpandedIdx === idx ? '▲' : '▼'}
+                    </span>
+                  </div>
+
+                  {csvExpandedIdx === idx && (
+                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                        <div>
+                          <p className="section-label" style={{ marginBottom: 8 }}>Contato</p>
+                          {lead.email    && <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>✉ {lead.email}</p>}
+                          {lead.telefone && <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0' }}>☎ {lead.telefone}</p>}
+                          {lead.website && (
+                            <a href={lead.website} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#4fa3e0', display: 'block', marginTop: 4 }}>Site ↗</a>
+                          )}
+                          {lead.linkedin_url && (
+                            <a href={lead.linkedin_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#4fa3e0', display: 'block', marginTop: 4 }}>LinkedIn ↗</a>
+                          )}
+                          {!lead.email && !lead.telefone && (
+                            <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sem dados de contato</p>
+                          )}
+                          {lead.melhor_canal && (
+                            <p style={{ fontSize: 12, color: '#f97316', marginTop: 8, fontWeight: 600 }}>
+                              Canal ideal: {lead.melhor_canal === 'ligacao' ? '📞 ligação' : lead.melhor_canal === 'whatsapp' ? '💬 WhatsApp' : '📞💬 ambos'}
+                            </p>
+                          )}
+                        </div>
+                        <div>
+                          {lead.justificativa && (
+                            <>
+                              <p className="section-label" style={{ marginBottom: 6 }}>Análise IA</p>
+                              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>{lead.justificativa}</p>
+                            </>
+                          )}
+                          {lead.argumento_abertura && (
+                            <>
+                              <p className="section-label" style={{ marginBottom: 6, marginTop: 12 }}>Argumento de abertura</p>
+                              <p style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.6, margin: 0 }}>&ldquo;{lead.argumento_abertura}&rdquo;</p>
+                            </>
+                          )}
+                        </div>
+                        {(lead.dores_tipicas?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Dores típicas</p>
+                            {lead.dores_tipicas.map((d, i) => <p key={i} style={{ fontSize: 12, color: '#ef4444', margin: '3px 0' }}>! {d}</p>)}
+                          </div>
+                        )}
+                        {(lead.servicos_sugeridos?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Serviços sugeridos</p>
+                            {lead.servicos_sugeridos.map((s, i) => <p key={i} style={{ fontSize: 12, color: '#f97316', margin: '3px 0' }}>✓ {s}</p>)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {csvLeads.length === 0 && (csvState === 'idle' || csvState === 'done' || csvState === 'error') && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
+              <p style={{ fontSize: 36, margin: '0 0 12px' }}>📄</p>
+              <p style={{ fontSize: 14 }}>
+                {csvState === 'idle'
+                  ? 'Faça upload do CSV exportado do Apollo.io e processe as empresas automaticamente.'
+                  : 'Nenhuma empresa processada ainda.'}
               </p>
             </div>
           )}
