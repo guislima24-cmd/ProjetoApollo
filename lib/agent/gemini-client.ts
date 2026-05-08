@@ -1,9 +1,9 @@
 // Cliente Gemini Flash para análise de leads em massa
-// Modelo: gemini-1.5-flash — gratuito até 1M tokens/dia
+// Modelo: gemini-flash-latest — alias estável, sempre aponta para a versão free mais recente
 // NOTA: adicionar GEMINI_API_KEY no Vercel → Settings → Environment Variables
 
 const GEMINI_API_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent'
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'
 
 const MAX_RETRIES = 3
 

@@ -454,11 +454,15 @@ export default function AgentePage() {
     setGeminiTestResult(null)
     try {
       const res  = await fetch('/api/test-gemini')
-      const data = await res.json() as { ok: boolean; error?: string; fix?: string; status?: number; model?: string }
+      const data = await res.json() as {
+        ok: boolean; error?: string; fix?: string; status?: number
+        model_tested?: string; available_flash_models?: string[]
+      }
+      const models = data.available_flash_models?.join(', ') ?? ''
       if (data.ok) {
-        setGeminiTestResult({ ok: true, msg: `✓ Gemini ${data.model ?? ''} funcionando corretamente` })
+        setGeminiTestResult({ ok: true, msg: `✓ ${data.model_tested ?? 'Gemini'} funcionando${models ? ` | Disponíveis: ${models}` : ''}` })
       } else {
-        setGeminiTestResult({ ok: false, msg: `Erro ${data.status ?? ''}: ${data.error ?? ''}\n${data.fix ?? ''}` })
+        setGeminiTestResult({ ok: false, msg: `Erro ${data.status ?? ''}: ${data.fix ?? data.error ?? ''}${models ? `\nModelos disponíveis: ${models}` : ''}` })
       }
     } catch (err) {
       setGeminiTestResult({ ok: false, msg: `Falha na requisição: ${String(err)}` })
