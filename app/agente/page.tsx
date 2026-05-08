@@ -94,6 +94,7 @@ interface CsvLead extends CsvCompany {
   servicos_sugeridos: string[]
   melhor_canal:       string | null
   argumento_abertura: string | null
+  contatos_alvo:      string[]
   ok:                 boolean
 }
 
@@ -1935,6 +1936,29 @@ export default function AgentePage() {
                           <div>
                             <p className="section-label" style={{ marginBottom: 8 }}>Serviços sugeridos</p>
                             {lead.servicos_sugeridos.map((s, i) => <p key={i} style={{ fontSize: 12, color: '#f97316', margin: '3px 0' }}>✓ {s}</p>)}
+                          </div>
+                        )}
+                        {(lead.contatos_alvo?.length ?? 0) > 0 && (
+                          <div style={{ gridColumn: '1 / -1' }}>
+                            <p className="section-label" style={{ marginBottom: 8 }}>Contatos sugeridos para prospecção</p>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                              {lead.contatos_alvo.map((c, i) => {
+                                const isLinkedIn = c.includes('(LinkedIn)')
+                                return (
+                                  <span key={i} style={{
+                                    fontSize: 12,
+                                    padding: '4px 10px',
+                                    borderRadius: 20,
+                                    background: isLinkedIn ? 'rgba(10,102,194,0.15)' : 'rgba(249,115,22,0.12)',
+                                    color: isLinkedIn ? '#4fa3e0' : '#f97316',
+                                    border: `1px solid ${isLinkedIn ? 'rgba(10,102,194,0.3)' : 'rgba(249,115,22,0.3)'}`,
+                                    fontWeight: isLinkedIn ? 600 : 400,
+                                  }}>
+                                    {isLinkedIn ? '👤 ' : '🔍 '}{c}
+                                  </span>
+                                )
+                              })}
+                            </div>
                           </div>
                         )}
                       </div>

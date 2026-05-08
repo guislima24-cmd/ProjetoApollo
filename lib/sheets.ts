@@ -1402,8 +1402,9 @@ const CSV_HEADERS = [
   'Serviços Sugeridos', // N
   'Melhor Canal',   // O
   'Argumento de Abertura', // P
-  'Status',         // Q
-  'Membro',         // R
+  'Contatos Sugeridos', // Q
+  'Status',         // R
+  'Membro',         // S
 ]
 
 let csvTabEnsured = false
@@ -1422,7 +1423,7 @@ async function ensureCsvTab(): Promise<void> {
   }
   await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${CSV_TAB}'!A1:R1`,
+    range: `'${CSV_TAB}'!A1:S1`,
     valueInputOption: 'RAW',
     requestBody: { values: [CSV_HEADERS] },
   }))
@@ -1445,6 +1446,7 @@ export async function saveCsvLead(params: {
   servicos_sugeridos?: string[]
   melhor_canal?:       string | null
   argumento_abertura?: string | null
+  contatos_alvo?:      string[]
   memberTab:           string
 }): Promise<number> {
   await ensureCsvTab()
@@ -1469,6 +1471,7 @@ export async function saveCsvLead(params: {
     (params.servicos_sugeridos ?? []).join('; '),
     params.melhor_canal                ?? '',
     sanitize(params.argumento_abertura ?? ''),
+    (params.contatos_alvo      ?? []).join('; '),
     'Novo',
     sanitize(params.memberTab),
   ]
@@ -1492,7 +1495,7 @@ export async function saveCsvLead(params: {
   if (existingRow > 1) {
     await withRetry(() => sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${CSV_TAB}'!A${existingRow}:R${existingRow}`,
+      range: `'${CSV_TAB}'!A${existingRow}:S${existingRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     }))
@@ -1506,7 +1509,7 @@ export async function saveCsvLead(params: {
   const targetRow = Math.max(2, lastDataRow + 1)
   await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${CSV_TAB}'!A${targetRow}:R${targetRow}`,
+    range: `'${CSV_TAB}'!A${targetRow}:S${targetRow}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   }))

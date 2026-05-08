@@ -13,16 +13,17 @@ export async function POST(req: NextRequest) {
   const memberTab = session.user.memberTab
 
   const body = await req.json() as {
-    nome:          string
-    setor?:        string | null
-    cidade?:       string | null
-    funcionarios?: string | null
-    website?:      string | null
-    linkedin_url?: string | null
-    telefone?:     string | null
-    email?:        string | null
-    website_text?: string | null
-    linkedin_text?: string | null
+    nome:                string
+    setor?:              string | null
+    cidade?:             string | null
+    funcionarios?:       string | null
+    website?:            string | null
+    linkedin_url?:       string | null
+    telefone?:           string | null
+    email?:              string | null
+    website_text?:       string | null
+    linkedin_text?:      string | null
+    linkedin_employees?: Array<{ name: string; role: string }> | null
   }
 
   if (!body.nome) {
@@ -32,14 +33,15 @@ export async function POST(req: NextRequest) {
   let analysis: Awaited<ReturnType<typeof analyzeCsvLead>> = null
   try {
     analysis = await analyzeCsvLead({
-      nome:          body.nome,
-      setor:         body.setor,
-      cidade:        body.cidade,
-      funcionarios:  body.funcionarios,
-      website:       body.website,
-      linkedin_url:  body.linkedin_url,
-      website_text:  body.website_text,
-      linkedin_text: body.linkedin_text,
+      nome:                body.nome,
+      setor:               body.setor,
+      cidade:              body.cidade,
+      funcionarios:        body.funcionarios,
+      website:             body.website,
+      linkedin_url:        body.linkedin_url,
+      website_text:        body.website_text,
+      linkedin_text:       body.linkedin_text,
+      linkedin_employees:  body.linkedin_employees,
     })
   } catch (err) {
     console.error('[process-csv] Gemini error:', err)
@@ -63,6 +65,7 @@ export async function POST(req: NextRequest) {
       servicos_sugeridos: analysis?.servicos_sugeridos  ?? [],
       melhor_canal:       analysis?.melhor_canal         ?? null,
       argumento_abertura: analysis?.argumento_abertura  ?? null,
+      contatos_alvo:      analysis?.contatos_alvo       ?? [],
       memberTab,
     })
   } catch (err) {
@@ -85,6 +88,7 @@ export async function POST(req: NextRequest) {
     servicos_sugeridos: analysis?.servicos_sugeridos  ?? [],
     melhor_canal:       analysis?.melhor_canal         ?? null,
     argumento_abertura: analysis?.argumento_abertura  ?? null,
+    contatos_alvo:      analysis?.contatos_alvo       ?? [],
     ok:                 !!analysis,
   }
 

@@ -65,13 +65,13 @@ async function scrapeLinkedIn(tabId) {
     const result = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
-        // Detecta página de login — não temos acesso sem conta
         if (document.querySelector('input[name="session_key"]') || document.querySelector('.login__form')) {
-          return ''
+          return { text: '', employees: [] }
         }
-        // Remove elementos que poluem o texto
         document.querySelectorAll('script,style,nav,header,footer,aside,iframe').forEach(el => el.remove())
-        // Coleta texto relevante do about/overview
+
+        // About text
+        let text = ''
         const sections = [
           '.org-about-us-organization-description__text',
           '.organization-about-us',
@@ -81,14 +81,44 @@ async function scrapeLinkedIn(tabId) {
         ]
         for (const sel of sections) {
           const el = document.querySelector(sel)
-          if (el) return (el.innerText ?? '').slice(0, 2000)
+          if (el) { text = (el.innerText ?? '').slice(0, 2000); break }
         }
-        return (document.body?.innerText ?? '').slice(0, 2000)
+        if (!text) text = (document.body?.innerText ?? '').slice(0, 2000)
+
+        // Tenta extrair colaboradores visíveis na página da empresa
+        const employees = []
+        const empSelectors = [
+          '.org-people-profiles-module__profile-list li',
+          '[data-test-id*="profile-card"]',
+          '[class*="org-people-profile-card"]',
+          '.artdeco-entity-lockup',
+        ]
+        for (const sel of empSelectors) {
+          const cards = document.querySelectorAll(sel)
+          if (cards.length > 0) {
+            cards.forEach(card => {
+              const name = (
+                card.querySelector('[class*="profile-title"], [class*="lockup__title"], .artdeco-entity-lockup__title')
+                  ?.innerText?.trim()?.split('\n')[0] ?? ''
+              )
+              const role = (
+                card.querySelector('[class*="profile-position"], [class*="lockup__subtitle"], .artdeco-entity-lockup__subtitle')
+                  ?.innerText?.trim()?.split('\n')[0] ?? ''
+              )
+              if (name && name.length > 1 && name.length < 60) {
+                employees.push({ name, role })
+              }
+            })
+            break
+          }
+        }
+
+        return { text, employees: employees.slice(0, 6) }
       },
     })
-    return result?.[0]?.result ?? ''
+    return result?.[0]?.result ?? { text: '', employees: [] }
   } catch {
-    return ''
+    return { text: '', employees: [] }
   }
 }
 
@@ -128,14 +158,17 @@ async function runCsvLoop() {
       const company = queue[i]
       console.log(`[CSV_AGENT] ${i + 1}/${queue.length}: ${company.nome}`)
 
-      let linkedin_text = ''
-      let website_text  = ''
+      let linkedin_text      = ''
+      let linkedin_employees = []
+      let website_text       = ''
 
       // 1. Scrape LinkedIn (se URL disponível)
       if (company.linkedin_url) {
         try {
           tabId = await csvOpenTab(company.linkedin_url, 3000)
-          linkedin_text = await scrapeLinkedIn(tabId)
+          const liResult = await scrapeLinkedIn(tabId)
+          linkedin_text      = liResult.text      ?? ''
+          linkedin_employees = liResult.employees ?? []
           await csvCloseTab(tabId); tabId = null
           await new Promise(r => setTimeout(r, randomDelay()))
         } catch (e) {
@@ -159,8 +192,9 @@ async function runCsvLoop() {
 
       const enriched = {
         ...company,
-        linkedin_text: linkedin_text.slice(0, 1500),
-        website_text:  website_text.slice(0, 1500),
+        linkedin_text:      linkedin_text.slice(0, 1500),
+        website_text:       website_text.slice(0, 1500),
+        linkedin_employees: linkedin_employees.slice(0, 6),
       }
 
       // Adiciona ao buffer de resultados (cliente vai buscar no próximo poll)
