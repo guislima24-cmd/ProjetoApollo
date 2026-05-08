@@ -3,12 +3,12 @@
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 
-// Candidatos em ordem: modelos com quota generosa no free tier primeiro
+// Candidatos em ordem — baseado na lista real retornada pela chave AI Studio
 const MODEL_CANDIDATES = [
-  'gemini-1.5-flash-8b',   // 1.500 req/dia, 15 RPM — melhor para volume
-  'gemini-1.5-flash',      // 1.500 req/dia, 15 RPM
-  'gemini-2.0-flash-lite', // quota menor no free tier
-  'gemini-2.5-flash-lite', // quota muito restrita no free tier
+  'gemini-2.0-flash-lite',  // free tier, confirmado disponível
+  'gemini-flash-lite-latest', // alias para versão lite mais recente
+  'gemini-2.0-flash',       // fallback se lite não funcionar
+  'gemini-2.5-flash-lite',  // quota mínima — último recurso
   'gemini-2.5-flash',
 ]
 
