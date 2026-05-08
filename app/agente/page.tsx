@@ -528,8 +528,27 @@ export default function AgentePage() {
   }
 
   function parseApolloCsv(text: string): CsvCompany[] {
-    const cleaned = text.replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    const lines = cleaned.trim().split('\n')
+    // Split em linhas respeitando campos quoted com quebras de linha internas
+    const cleaned = text.replace(/^﻿/, '')
+    const lines: string[] = []
+    let current = ''
+    let inQuotes = false
+    for (let i = 0; i < cleaned.length; i++) {
+      const ch = cleaned[i]
+      if (ch === '"') {
+        if (inQuotes && cleaned[i + 1] === '"') { current += '""'; i++ }
+        else inQuotes = !inQuotes
+        current += ch
+      } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+        if (ch === '\r' && cleaned[i + 1] === '\n') i++
+        if (current.trim()) lines.push(current)
+        current = ''
+      } else {
+        current += ch
+      }
+    }
+    if (current.trim()) lines.push(current)
+
     if (lines.length < 2) return []
 
     const headers = parseCSVRow(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9# ]/g, '').trim())
@@ -543,33 +562,32 @@ export default function AgentePage() {
     }
 
     const cols = {
-      nome:        find('company name', 'company', 'name'),
-      linkedin:    find('company linkedin', 'linkedin url', 'linkedin'),
-      website:     find('website'),
-      setor:       find('industry'),
+      nome:         find('company name', 'company', 'name'),
+      linkedin:     find('company linkedin', 'linkedin url', 'linkedin'),
+      website:      find('website'),
+      setor:        find('industry'),
       funcionarios: find('# employees', 'employees', 'headcount'),
-      cidade:      find('city'),
-      estado:      find('state'),
-      telefone:    find('phone', 'direct phone', 'corporate phone'),
-      email:       find('email'),
+      cidade:       find('city'),
+      estado:       find('state'),
+      telefone:     find('phone', 'direct phone', 'corporate phone'),
+      email:        find('email'),
     }
 
     return lines.slice(1)
-      .filter(l => l.trim())
       .map(line => parseCSVRow(line))
       .filter(row => (row[cols.nome] ?? '').trim().length >= 2)
       .map(row => ({
-        nome:         (row[cols.nome]        ?? '').trim(),
-        linkedin_url: cols.linkedin  >= 0 ? (row[cols.linkedin]    ?? '').trim() || null : null,
-        website:      cols.website   >= 0 ? (row[cols.website]     ?? '').trim() || null : null,
-        setor:        cols.setor     >= 0 ? (row[cols.setor]       ?? '').trim() || null : null,
+        nome:         (row[cols.nome]           ?? '').trim(),
+        linkedin_url: cols.linkedin     >= 0 ? (row[cols.linkedin]     ?? '').trim() || null : null,
+        website:      cols.website      >= 0 ? (row[cols.website]      ?? '').trim() || null : null,
+        setor:        cols.setor        >= 0 ? (row[cols.setor]        ?? '').trim() || null : null,
         funcionarios: cols.funcionarios >= 0 ? (row[cols.funcionarios] ?? '').trim() || null : null,
         cidade:       [
-          cols.cidade  >= 0 ? (row[cols.cidade]  ?? '').trim() : '',
-          cols.estado  >= 0 ? (row[cols.estado]  ?? '').trim() : '',
+          cols.cidade >= 0 ? (row[cols.cidade] ?? '').trim() : '',
+          cols.estado >= 0 ? (row[cols.estado] ?? '').trim() : '',
         ].filter(Boolean).join(', ') || null,
-        telefone:     cols.telefone  >= 0 ? (row[cols.telefone]    ?? '').trim() || null : null,
-        email:        cols.email     >= 0 ? (row[cols.email]       ?? '').trim() || null : null,
+        telefone:     cols.telefone     >= 0 ? (row[cols.telefone]     ?? '').trim() || null : null,
+        email:        cols.email        >= 0 ? (row[cols.email]        ?? '').trim() || null : null,
       }))
   }
 
