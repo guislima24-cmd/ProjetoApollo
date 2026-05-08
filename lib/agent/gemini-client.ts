@@ -99,7 +99,7 @@ export async function analyzeWithGemini<T = Record<string, unknown>>(
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature:      0.3,
-          maxOutputTokens:  1000,
+          maxOutputTokens:  2048,
           responseMimeType: 'application/json',
         },
       }),
