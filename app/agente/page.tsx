@@ -146,6 +146,9 @@ export default function AgentePage() {
   const [mapsProgress,    setMapsProgress]    = useState({ done: 0, total: 0 })
   const [mapsErrorMsg,    setMapsErrorMsg]    = useState<string | null>(null)
   const [mapsExpandedIdx, setMapsExpandedIdx] = useState<number | null>(null)
+  const [mapsAiError,     setMapsAiError]     = useState<string | null>(null)
+  const [geminiTestResult, setGeminiTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [testingGemini,   setTestingGemini]   = useState(false)
 
   // Maps filters
   const [mapsCidades,  setMapsCidades]  = useState<string[]>([])
@@ -375,6 +378,8 @@ export default function AgentePage() {
     setMapsLeads([])
     setMapsProgress({ done: 0, total: mapsCidades.length * mapsLimite })
     setMapsErrorMsg(null)
+    setMapsAiError(null)
+    setGeminiTestResult(null)
     setMapsExpandedIdx(null)
     setMapsState('scraping')
 
@@ -417,6 +422,8 @@ export default function AgentePage() {
               setMapsState(event.total_saved > 0 ? 'done' : 'error')
               setMapsProgress({ done: event.total_saved, total: event.total_found || found })
               fetchMapsUsage()
+            } else if (event.type === 'ai_warning') {
+              setMapsAiError(event.error ?? 'Erro desconhecido na API Gemini')
             } else if (event.type === 'error' && event.blocked) {
               setMapsErrorMsg(event.message)
             }
@@ -437,7 +444,27 @@ export default function AgentePage() {
     setMapsProgress({ done: 0, total: 0 })
     setMapsState('idle')
     setMapsErrorMsg(null)
+    setMapsAiError(null)
+    setGeminiTestResult(null)
     setMapsExpandedIdx(null)
+  }
+
+  async function testGemini() {
+    setTestingGemini(true)
+    setGeminiTestResult(null)
+    try {
+      const res  = await fetch('/api/test-gemini')
+      const data = await res.json() as { ok: boolean; error?: string; fix?: string; status?: number; model?: string }
+      if (data.ok) {
+        setGeminiTestResult({ ok: true, msg: `✓ Gemini ${data.model ?? ''} funcionando corretamente` })
+      } else {
+        setGeminiTestResult({ ok: false, msg: `Erro ${data.status ?? ''}: ${data.error ?? ''}\n${data.fix ?? ''}` })
+      }
+    } catch (err) {
+      setGeminiTestResult({ ok: false, msg: `Falha na requisição: ${String(err)}` })
+    } finally {
+      setTestingGemini(false)
+    }
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -755,6 +782,42 @@ export default function AgentePage() {
                   Enriquecer com análise IA {mapsUseAI ? '(ativo)' : '(desativado)'}
                 </span>
               </div>
+
+              {/* Diagnóstico Gemini */}
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  onClick={testGemini}
+                  disabled={testingGemini}
+                  style={{
+                    padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                    background: 'transparent', border: '1px solid var(--border)',
+                    color: 'var(--text-secondary)', cursor: testingGemini ? 'wait' : 'pointer',
+                  }}
+                >
+                  {testingGemini ? 'Testando…' : '⚡ Testar conexão Gemini'}
+                </button>
+                {geminiTestResult && (
+                  <span style={{
+                    fontSize: 12, fontWeight: 600,
+                    color: geminiTestResult.ok ? '#4ade80' : '#f87171',
+                    maxWidth: 460, whiteSpace: 'pre-wrap', lineHeight: 1.4,
+                  }}>
+                    {geminiTestResult.msg}
+                  </span>
+                )}
+              </div>
+
+              {/* Aviso de erro de IA durante busca */}
+              {mapsAiError && (
+                <div style={{
+                  marginTop: 10, padding: '8px 12px', borderRadius: 8,
+                  background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)',
+                  fontSize: 12, color: '#f87171', lineHeight: 1.5,
+                }}>
+                  <strong>⚠ Erro na análise de IA:</strong> {mapsAiError}<br />
+                  <span style={{ color: 'var(--text-muted)' }}>Leads foram salvos sem pontuação. Clique em "Testar conexão Gemini" para diagnosticar.</span>
+                </div>
+              )}
 
               {mapsCidades.length > 0 && (
                 <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>

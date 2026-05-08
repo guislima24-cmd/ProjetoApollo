@@ -160,18 +160,19 @@ export async function POST(req: NextRequest) {
             emit('company_found', { name: nome, city: cidade, phone: telefone_br, website: site })
             console.log(`[MAPS_AGENT] Encontrada: ${nome} | tel: ${telefone_br ?? '-'} | site: ${site ?? '-'}`)
 
-            let analysis = null
+            let analysis: Awaited<ReturnType<typeof analyzeCompanyForMaps>> = null
             if (useAI) {
-              analysis = await analyzeCompanyForMaps({ nome, tipos, cidade, endereco, site, horario })
-              if (analysis) {
-                const isAiFallback = analysis.justificativa === 'Erro na análise de IA'
-                if (isAiFallback) {
-                  console.warn(`[MAPS_AGENT] IA falhou para ${nome} — usando fallback (baixo)`)
-                  emit('ai_warning', { name: nome, message: 'Análise de IA falhou (rate limit ou chave inválida). Salvando com potencial=baixo.' })
-                } else {
+              try {
+                analysis = await analyzeCompanyForMaps({ nome, tipos, cidade, endereco, site, horario })
+                if (analysis) {
                   emit('analysis_done', { name: nome, potencial: analysis.potencial, argumento: analysis.argumento_abertura })
                   console.log(`[MAPS_AGENT] IA: ${nome} → potencial=${analysis.potencial}`)
                 }
+              } catch (aiErr) {
+                const errMsg = (aiErr as Error).message ?? String(aiErr)
+                console.error(`[MAPS_AGENT] Erro IA para ${nome}:`, errMsg)
+                emit('ai_warning', { name: nome, error: errMsg })
+                // analysis permanece null — lead salvo sem dados de IA
               }
             }
 

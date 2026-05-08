@@ -55,10 +55,6 @@ Valores para potencial: "alto", "medio" ou "baixo".
 Valores para melhor_canal: "ligacao", "whatsapp" ou "ambos".
 Valores para melhor_horario: "manhã", "tarde" ou "ambos".`
 
-  try {
-    return await analyzeWithGemini<MapsAnalysis>(prompt)
-  } catch (error) {
-    console.error('[GEMINI] Falha na análise Maps, salvando sem IA:', error)
-    return FALLBACK
-  }
+  // Deixa erros propagarem — o caller (start-maps/route.ts) decide o fallback
+  return await analyzeWithGemini<MapsAnalysis>(prompt)
 }
