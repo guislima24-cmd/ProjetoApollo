@@ -4,12 +4,13 @@
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 
-// Candidatos gratuitos em ordem de preferência
+// Candidatos em ordem de preferência (confirmados visíveis no AI Studio)
 const MODEL_CANDIDATES = [
   'gemini-2.0-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
   'gemini-1.5-flash-8b',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
 ]
 
 // Cache do modelo que funcionou (evita re-discovery a cada chamada)
@@ -21,25 +22,28 @@ async function resolveModel(apiKey: string): Promise<string> {
   for (const model of MODEL_CANDIDATES) {
     const url = `${BASE_URL}/${model}:generateContent?key=${apiKey}`
     try {
+      // Probe simples SEM responseMimeType — alguns modelos retornam 400 com ele
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: '{"ok":true}' }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 10, responseMimeType: 'application/json' },
+          contents: [{ parts: [{ text: 'ok' }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 5 },
         }),
       })
       if (res.ok || res.status === 429) {
-        // 429 = rate limit mas modelo existe — aceitável
         console.log(`[GEMINI] Modelo selecionado: ${model}`)
         resolvedModel = model
         return model
       }
-      console.log(`[GEMINI] Modelo ${model} → ${res.status}, tentando próximo…`)
-    } catch {}
+      const errText = await res.text().catch(() => '')
+      console.log(`[GEMINI] Modelo ${model} → ${res.status}: ${errText.substring(0, 80)}, tentando próximo…`)
+    } catch (e) {
+      console.log(`[GEMINI] Modelo ${model} → exception: ${e}, tentando próximo…`)
+    }
   }
 
-  throw new Error(`[GEMINI] Nenhum modelo disponível para esta chave. Candidatos testados: ${MODEL_CANDIDATES.join(', ')}`)
+  throw new Error(`[GEMINI] Nenhum modelo disponível. Testados: ${MODEL_CANDIDATES.join(', ')}`)
 }
 
 const MAX_RETRIES = 3

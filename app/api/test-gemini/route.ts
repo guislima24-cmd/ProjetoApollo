@@ -3,13 +3,15 @@ import { auth } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
-// Candidatos gratuitos em ordem de preferência
-const FREE_FLASH_CANDIDATES = [
+const MODEL_CANDIDATES = [
   'gemini-2.0-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
   'gemini-1.5-flash-8b',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
 ]
+
+const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 
 export async function GET(_req: NextRequest) {
   const session = await auth()
@@ -18,65 +20,59 @@ export async function GET(_req: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     return Response.json({
-      ok:    false,
+      ok:  false,
       error: 'GEMINI_API_KEY ausente no .env.local',
-      fix:   'Adicione GEMINI_API_KEY=AIza... no arquivo .env.local e reinicie o servidor',
+      fix:  'Adicione GEMINI_API_KEY=AIza... no .env.local e reinicie o servidor',
     })
   }
 
-  // Passo 1: listar modelos disponíveis para esta chave
-  let listedModels: string[] = []
+  // Passo 1: listar modelos disponíveis
+  let flashModels: string[] = []
   try {
-    const listRes  = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`)
+    const listRes  = await fetch(`${BASE_URL}?key=${apiKey}`)
     const listData = await listRes.json() as { models?: { name: string; supportedGenerationMethods?: string[] }[] }
-    listedModels = (listData.models ?? [])
-      .filter(m => (m.supportedGenerationMethods ?? []).includes('generateContent'))
+    flashModels = (listData.models ?? [])
+      .filter(m => m.name.includes('flash') && (m.supportedGenerationMethods ?? []).includes('generateContent'))
       .map(m => m.name.replace('models/', ''))
-    console.log('[GEMINI] Todos os modelos disponíveis com generateContent:', listedModels)
+    console.log('[GEMINI] Modelos flash disponíveis:', flashModels)
   } catch (err) {
     console.warn('[GEMINI] Falha ao listar modelos:', err)
   }
 
-  const flashModels = listedModels.filter(m => m.includes('flash'))
-  console.log('[GEMINI] Modelos flash disponíveis:', flashModels)
-
-  // Passo 2: tentar cada candidato até achar um que funcione
-  const testBody = JSON.stringify({
-    contents: [{ parts: [{ text: 'Responda somente: {"ok":true}' }] }],
-    generationConfig: { temperature: 0, maxOutputTokens: 20, responseMimeType: 'application/json' },
+  // Passo 2: tentar candidatos — probe SEM responseMimeType (evita 400 em modelos que não suportam)
+  const probeBody = JSON.stringify({
+    contents: [{ parts: [{ text: 'ok' }] }],
+    generationConfig: { temperature: 0, maxOutputTokens: 5 },
   })
 
-  // Prioriza modelos listados pela API; fallback para candidatos conhecidos
+  const tried: { model: string; status: number; snippet: string }[] = []
+
   const toTry = [
-    ...FREE_FLASH_CANDIDATES.filter(c => listedModels.includes(c)),
-    ...FREE_FLASH_CANDIDATES.filter(c => !listedModels.includes(c)),
+    ...MODEL_CANDIDATES.filter(c => flashModels.includes(c)),
+    ...MODEL_CANDIDATES.filter(c => !flashModels.includes(c)),
   ]
 
   for (const model of toTry) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+    const url = `${BASE_URL}/${model}:generateContent?key=${apiKey}`
     try {
-      const res  = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: testBody })
+      const res  = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: probeBody })
       const body = await res.text()
+      tried.push({ model, status: res.status, snippet: body.substring(0, 80) })
+      console.log(`[GEMINI] ${model} → ${res.status}: ${body.substring(0, 80)}`)
       if (res.ok) {
-        console.log('[GEMINI] Modelo funcionando:', model)
-        return Response.json({
-          ok:           true,
-          model_tested: model,
-          flash_models: flashModels,
-          message:      `Use este modelo: ${model}`,
-        })
+        return Response.json({ ok: true, model_tested: model, flash_models: flashModels, tried })
       }
-      console.log(`[GEMINI] Modelo ${model} → ${res.status}: ${body.substring(0, 100)}`)
-    } catch {}
+    } catch (e) {
+      tried.push({ model, status: 0, snippet: String(e) })
+    }
   }
 
   return Response.json({
     ok:          false,
     flash_models: flashModels,
-    tried:       toTry,
-    error:       'Nenhum modelo gratuito funcionou',
-    fix:         flashModels.length
-      ? `Modelos listados pela API: ${flashModels.join(', ')} — informe ao desenvolvedor qual usar`
-      : 'Chave sem acesso ao Gemini — verifique se o projeto tem a API "Generative Language" ativada em console.cloud.google.com',
+    tried,
+    fix: flashModels.length
+      ? `Modelos na sua chave: ${flashModels.slice(0, 5).join(', ')}. Nenhum aceitou a probe — veja campo "tried" para detalhes`
+      : 'Chave sem acesso ao Gemini — ative a "Generative Language API" em console.cloud.google.com',
   })
 }
