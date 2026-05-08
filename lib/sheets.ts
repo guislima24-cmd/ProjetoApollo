@@ -1382,6 +1382,137 @@ export async function saveMapLead(params: {
   return targetRow
 }
 
+// ── Apollo CSV Leads ──────────────────────────────────────────────────────────
+
+const CSV_TAB = 'Leads CSV'
+const CSV_HEADERS = [
+  'Data',           // A
+  'Empresa',        // B
+  'Setor',          // C
+  'Cidade',         // D
+  'Funcionários',   // E
+  'Website',        // F
+  'LinkedIn URL',   // G
+  'Telefone',       // H
+  'Email',          // I
+  'Potencial IA',   // J
+  'Score Fit',      // K
+  'Justificativa',  // L
+  'Dores Típicas',  // M
+  'Serviços Sugeridos', // N
+  'Melhor Canal',   // O
+  'Argumento de Abertura', // P
+  'Status',         // Q
+  'Membro',         // R
+]
+
+let csvTabEnsured = false
+
+async function ensureCsvTab(): Promise<void> {
+  if (csvTabEnsured) return
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+  const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === CSV_TAB)
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: CSV_TAB } } }] },
+    })
+  }
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${CSV_TAB}'!A1:R1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [CSV_HEADERS] },
+  }))
+  csvTabEnsured = true
+}
+
+export async function saveCsvLead(params: {
+  empresa:             string
+  setor?:              string | null
+  cidade?:             string | null
+  funcionarios?:       string | null
+  website?:            string | null
+  linkedin_url?:       string | null
+  telefone?:           string | null
+  email?:              string | null
+  potencial?:          string | null
+  score_fit?:          number | null
+  justificativa?:      string | null
+  dores_tipicas?:      string[]
+  servicos_sugeridos?: string[]
+  melhor_canal?:       string | null
+  argumento_abertura?: string | null
+  memberTab:           string
+}): Promise<number> {
+  await ensureCsvTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const now = new Date().toLocaleDateString('pt-BR')
+  const row = [
+    now,
+    sanitize(params.empresa),
+    sanitize(params.setor              ?? ''),
+    sanitize(params.cidade             ?? ''),
+    sanitize(params.funcionarios       ?? ''),
+    params.website                     ?? '',
+    params.linkedin_url                ?? '',
+    params.telefone                    ?? '',
+    params.email                       ?? '',
+    sanitize(params.potencial          ?? ''),
+    params.score_fit != null ? String(params.score_fit) : '',
+    sanitize(params.justificativa      ?? ''),
+    (params.dores_tipicas      ?? []).join('; '),
+    (params.servicos_sugeridos ?? []).join('; '),
+    params.melhor_canal                ?? '',
+    sanitize(params.argumento_abertura ?? ''),
+    'Novo',
+    sanitize(params.memberTab),
+  ]
+
+  // Dedup por empresa (col B)
+  const colRes = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${CSV_TAB}'!B:B`,
+  }))
+  const colValues = colRes.data.values ?? []
+  const empresaLow = params.empresa.toLowerCase().trim()
+
+  let existingRow = -1
+  for (let i = 1; i < colValues.length; i++) {
+    if ((colValues[i]?.[0] ?? '').toLowerCase().trim() === empresaLow) {
+      existingRow = i + 1
+      break
+    }
+  }
+
+  if (existingRow > 1) {
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${CSV_TAB}'!A${existingRow}:R${existingRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [row] },
+    }))
+    return existingRow
+  }
+
+  let lastDataRow = 1
+  for (let i = colValues.length - 1; i >= 1; i--) {
+    if (colValues[i]?.[0]) { lastDataRow = i + 1; break }
+  }
+  const targetRow = Math.max(2, lastDataRow + 1)
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${CSV_TAB}'!A${targetRow}:R${targetRow}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [row] },
+  }))
+  return targetRow
+}
+
 // ── Maps API Usage Tracking ───────────────────────────────────────────────────
 
 const MAPS_USAGE_TAB = 'Maps Usage'
