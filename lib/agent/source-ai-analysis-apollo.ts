@@ -62,7 +62,7 @@ Regras:
     parsed.score_fit = Math.min(10, Math.max(1, Number(parsed.score_fit) || 5))
     return parsed
   } catch (error) {
-    console.error('[GEMINI] Falha na análise Apollo, salvando sem IA:', (error as Error).message)
+    console.error('[GEMINI] Falha na análise Apollo, salvando sem IA:', error)
     return FALLBACK
   }
 }

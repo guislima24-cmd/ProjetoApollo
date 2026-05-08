@@ -162,14 +162,16 @@ export async function POST(req: NextRequest) {
 
             let analysis = null
             if (useAI) {
-              try {
-                analysis = await analyzeCompanyForMaps({ nome, tipos, cidade, endereco, site, horario })
-                if (analysis) {
+              analysis = await analyzeCompanyForMaps({ nome, tipos, cidade, endereco, site, horario })
+              if (analysis) {
+                const isAiFallback = analysis.justificativa === 'Erro na análise de IA'
+                if (isAiFallback) {
+                  console.warn(`[MAPS_AGENT] IA falhou para ${nome} — usando fallback (baixo)`)
+                  emit('ai_warning', { name: nome, message: 'Análise de IA falhou (rate limit ou chave inválida). Salvando com potencial=baixo.' })
+                } else {
                   emit('analysis_done', { name: nome, potencial: analysis.potencial, argumento: analysis.argumento_abertura })
                   console.log(`[MAPS_AGENT] IA: ${nome} → potencial=${analysis.potencial}`)
                 }
-              } catch (err) {
-                console.error('[MAPS_AGENT] Erro na análise IA:', err)
               }
             }
 

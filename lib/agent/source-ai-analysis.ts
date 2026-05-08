@@ -44,7 +44,7 @@ Retorne SOMENTE um JSON válido (sem blocos de código ou markdown) com esta est
   try {
     return await analyzeWithGemini<AgentAnalysis>(prompt)
   } catch (error) {
-    console.error('[GEMINI] Falha na análise LinkedIn, salvando sem IA:', (error as Error).message)
+    console.error('[GEMINI] Falha na análise LinkedIn, salvando sem IA:', error)
     return FALLBACK
   }
 }

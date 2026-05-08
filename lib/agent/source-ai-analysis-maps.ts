@@ -58,7 +58,7 @@ Valores para melhor_horario: "manhã", "tarde" ou "ambos".`
   try {
     return await analyzeWithGemini<MapsAnalysis>(prompt)
   } catch (error) {
-    console.error('[GEMINI] Falha na análise Maps, salvando sem IA:', (error as Error).message)
+    console.error('[GEMINI] Falha na análise Maps, salvando sem IA:', error)
     return FALLBACK
   }
 }
