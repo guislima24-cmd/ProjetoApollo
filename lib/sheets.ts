@@ -1386,25 +1386,24 @@ export async function saveMapLead(params: {
 
 const CSV_TAB = 'Leads CSV'
 const CSV_HEADERS = [
-  'Data',           // A
-  'Empresa',        // B
-  'Setor',          // C
-  'Cidade',         // D
-  'Funcionários',   // E
-  'Website',        // F
-  'LinkedIn URL',   // G
-  'Telefone',       // H
-  'Email',          // I
-  'Potencial IA',   // J
-  'Score Fit',      // K
-  'Justificativa',  // L
-  'Dores Típicas',  // M
-  'Serviços Sugeridos', // N
-  'Melhor Canal',   // O
-  'Argumento de Abertura', // P
-  'Contatos Sugeridos', // Q
-  'Status',         // R
-  'Membro',         // S
+  'Data',                   // A
+  'Empresa',                // B
+  'Setor',                  // C
+  'Cidade',                 // D
+  'Funcionários',           // E
+  'Website',                // F
+  'LinkedIn URL',           // G
+  'Telefone',               // H
+  'Email',                  // I
+  'Potencial IA',           // J
+  'Score Fit',              // K
+  'Justificativa',          // L
+  'Dores Típicas',          // M
+  'Serviços Sugeridos',     // N
+  'Melhor Canal',           // O
+  'Argumento de Abertura',  // P
+  'Decisores LinkedIn',     // Q
+  'Membro',                 // R
 ]
 
 let csvTabEnsured = false
@@ -1423,7 +1422,7 @@ async function ensureCsvTab(): Promise<void> {
   }
   await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${CSV_TAB}'!A1:S1`,
+    range: `'${CSV_TAB}'!A1:R1`,
     valueInputOption: 'RAW',
     requestBody: { values: [CSV_HEADERS] },
   }))
@@ -1446,12 +1445,29 @@ export async function saveCsvLead(params: {
   servicos_sugeridos?: string[]
   melhor_canal?:       string | null
   argumento_abertura?: string | null
-  contatos_alvo?:      string[]
+  linkedin_employees?: Array<{ name: string; role: string; profile_url: string | null }>
   memberTab:           string
 }): Promise<number> {
   await ensureCsvTab()
   const spreadsheetId = getSpreadsheetId()
   const sheets = getSheets()
+
+  // Constrói fórmula HYPERLINK para cada decisor — clicável diretamente no Sheets
+  const employees = params.linkedin_employees ?? []
+  let decisoresCell: string
+  if (employees.length === 0) {
+    decisoresCell = ''
+  } else {
+    const parts = employees.map(e => {
+      const label = `${e.name}${e.role ? ' — ' + e.role : ''}`.replace(/"/g, "'")
+      return e.profile_url
+        ? `HYPERLINK("${e.profile_url}","${label}")`
+        : `"${label}"`
+    })
+    decisoresCell = parts.length === 1
+      ? `=${parts[0]}`
+      : `=${parts.join('&CHAR(10)&')}`
+  }
 
   const now = new Date().toLocaleDateString('pt-BR')
   const row = [
@@ -1471,8 +1487,7 @@ export async function saveCsvLead(params: {
     (params.servicos_sugeridos ?? []).join('; '),
     params.melhor_canal                ?? '',
     sanitize(params.argumento_abertura ?? ''),
-    (params.contatos_alvo      ?? []).join('; '),
-    'Novo',
+    decisoresCell,
     sanitize(params.memberTab),
   ]
 
@@ -1495,7 +1510,7 @@ export async function saveCsvLead(params: {
   if (existingRow > 1) {
     await withRetry(() => sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${CSV_TAB}'!A${existingRow}:S${existingRow}`,
+      range: `'${CSV_TAB}'!A${existingRow}:R${existingRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     }))
@@ -1509,7 +1524,7 @@ export async function saveCsvLead(params: {
   const targetRow = Math.max(2, lastDataRow + 1)
   await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${CSV_TAB}'!A${targetRow}:S${targetRow}`,
+    range: `'${CSV_TAB}'!A${targetRow}:R${targetRow}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   }))

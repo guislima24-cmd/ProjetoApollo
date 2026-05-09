@@ -49,33 +49,25 @@ export async function POST(req: NextRequest) {
     console.error('[process-csv] Gemini error:', err)
   }
 
-  // Formata os decisores para salvar no Sheets (coluna Q)
-  const contatos_sheets = linkedin_employees
-    .map(e => {
-      const base = `${e.name}${e.role ? ` — ${e.role}` : ''}`
-      return e.profile_url ? `${base} (${e.profile_url})` : base
-    })
-    .join(' | ')
-
   let rowNum: number | null = null
   try {
     rowNum = await saveCsvLead({
-      empresa:            body.nome,
-      setor:              body.setor,
-      cidade:             body.cidade,
-      funcionarios:       body.funcionarios,
-      website:            body.website,
-      linkedin_url:       body.linkedin_url,
-      telefone:           body.telefone,
-      email:              body.email,
-      potencial:          analysis?.potencial          ?? null,
-      score_fit:          analysis?.score_fit           ?? null,
-      justificativa:      analysis?.justificativa       ?? null,
-      dores_tipicas:      analysis?.dores_tipicas       ?? [],
-      servicos_sugeridos: analysis?.servicos_sugeridos  ?? [],
-      melhor_canal:       analysis?.melhor_canal         ?? null,
-      argumento_abertura: analysis?.argumento_abertura  ?? null,
-      contatos_alvo:      contatos_sheets ? [contatos_sheets] : [],
+      empresa:             body.nome,
+      setor:               body.setor,
+      cidade:              body.cidade,
+      funcionarios:        body.funcionarios,
+      website:             body.website,
+      linkedin_url:        body.linkedin_url,
+      telefone:            body.telefone,
+      email:               body.email,
+      potencial:           analysis?.potencial          ?? null,
+      score_fit:           analysis?.score_fit           ?? null,
+      justificativa:       analysis?.justificativa       ?? null,
+      dores_tipicas:       analysis?.dores_tipicas       ?? [],
+      servicos_sugeridos:  analysis?.servicos_sugeridos  ?? [],
+      melhor_canal:        analysis?.melhor_canal         ?? null,
+      argumento_abertura:  analysis?.argumento_abertura  ?? null,
+      linkedin_employees,
       memberTab,
     })
   } catch (err) {
