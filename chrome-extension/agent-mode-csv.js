@@ -114,48 +114,56 @@ async function scrapeLinkedInPeople(tabId) {
           return decisionKeywords.some(k => r.includes(k))
         }
 
+        // Valida se o texto parece um nome real de pessoa (não página/empresa/post)
+        function looksLikePersonName(text) {
+          if (!text || text.length < 3 || text.length > 55) return false
+          // Nome de pessoa: máximo ~4 palavras, sem URL, email, símbolo, número no início
+          if (/https?:|www\.|@|\$|#|^\d/.test(text)) return false
+          // Não é um título de empresa ou post (começa minúsculo, tem muitas palavras, etc.)
+          const words = text.trim().split(/\s+/)
+          if (words.length > 6) return false
+          // Pelo menos a primeira palavra começa com maiúscula
+          if (!/^[A-ZÁÉÍÓÚÀÃÕÂÊÔÜÇ]/.test(text)) return false
+          return true
+        }
+
         const seen = new Set()
         const employees = []
 
-        // Estratégia: todos os links /in/ na página (perfis de pessoas)
+        // Estratégia: links /in/ que apontam para perfis de pessoas (não /in/ geral)
         document.querySelectorAll('a[href*="/in/"]').forEach(link => {
           const href = (link.href ?? '').split('?')[0]
-          if (!href.includes('/in/') || href.endsWith('/in/')) return
+          // Precisa ter /in/ seguido de pelo menos 3 chars (slug ou ID)
+          const match = href.match(/\/in\/([^/?#]{3,})/)
+          if (!match) return
 
           const profileUrl = href.endsWith('/') ? href : href + '/'
           if (seen.has(profileUrl)) return
 
-          // Sobe na DOM para achar o card que contém este link
-          const card = link.closest('li, [class*="card"], [class*="profile-card"], [class*="lockup"], article')
+          // Sobe na DOM para achar o card do funcionário
+          const card = link.closest('li, [class*="profile-card"], [class*="lockup"], article')
+            ?? link.closest('[class*="card"]')
             ?? link.parentElement
 
           if (!card) return
 
-          // Nome: texto direto do link ou do elemento de título no card
-          const titleEl = card.querySelector('[class*="title"], [class*="name"], [class*="lockup__title"]')
-          let name = (titleEl?.innerText?.trim()?.split('\n')[0] ?? link.innerText?.trim()?.split('\n')[0] ?? '').trim()
+          // Nome: do elemento de título ou do texto do link
+          const titleEl = card.querySelector('[class*="title"], [class*="lockup__title"]')
+          let name = (titleEl?.innerText?.trim()?.split('\n')[0] ?? '').trim()
+          if (!name) name = (link.innerText?.trim()?.split('\n')[0] ?? '').trim()
 
-          // Role: subtítulo do card
+          // Valida nome antes de prosseguir
+          if (!looksLikePersonName(name)) return
+
+          // Cargo: subtítulo do card
           const subtitleEl = card.querySelector('[class*="subtitle"], [class*="position"], [class*="lockup__subtitle"]')
-          let role = (subtitleEl?.innerText?.trim()?.split('\n')[0] ?? '').trim()
+          const role = (subtitleEl?.innerText?.trim()?.split('\n')[0] ?? '').trim()
 
-          // Fallback: pegar todos os textos do card
-          if (!name || name.length < 2) {
-            const texts = Array.from(card.querySelectorAll('span, div'))
-              .map(el => el.childNodes.length === 1 && el.childNodes[0].nodeType === 3
-                ? (el.childNodes[0].textContent ?? '').trim()
-                : (el.innerText ?? '').trim().split('\n')[0])
-              .filter(t => t.length > 1 && t.length < 80 && !/^(ver|view|connect|seguir|follow|message|mensagem)/i.test(t))
-            if (texts[0]) name = texts[0]
-            if (!role && texts[1]) role = texts[1]
-          }
-
-          if (!name || name.length < 2 || name.length > 70) return
           seen.add(profileUrl)
-          employees.push({ name, role: role || '', profile_url: profileUrl, dm: isDM(role) })
+          employees.push({ name, role, profile_url: profileUrl, dm: isDM(role) })
         })
 
-        // Decisores primeiro, depois os demais; máximo 8
+        // Decisores primeiro
         employees.sort((a, b) => (b.dm ? 1 : 0) - (a.dm ? 1 : 0))
         const top = employees.filter(e => e.dm).length > 0
           ? employees.filter(e => e.dm)

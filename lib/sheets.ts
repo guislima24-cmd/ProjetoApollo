@@ -1452,22 +1452,14 @@ export async function saveCsvLead(params: {
   const spreadsheetId = getSpreadsheetId()
   const sheets = getSheets()
 
-  // Constrói fórmula HYPERLINK para cada decisor — clicável diretamente no Sheets
+  // Cada decisor em linhas separadas: "Nome — Cargo\nhttps://url"
+  // Sheets auto-detecta URLs como hiperlinks clicáveis
   const employees = params.linkedin_employees ?? []
-  let decisoresCell: string
-  if (employees.length === 0) {
-    decisoresCell = ''
-  } else {
-    const parts = employees.map(e => {
-      const label = `${e.name}${e.role ? ' — ' + e.role : ''}`.replace(/"/g, "'")
-      return e.profile_url
-        ? `HYPERLINK("${e.profile_url}","${label}")`
-        : `"${label}"`
-    })
-    decisoresCell = parts.length === 1
-      ? `=${parts[0]}`
-      : `=${parts.join('&CHAR(10)&')}`
-  }
+  const decisoresCell = employees.length === 0 ? '' :
+    employees.map(e => {
+      const label = `${e.name}${e.role ? ' — ' + e.role : ''}`
+      return e.profile_url ? `${label}\n${e.profile_url}` : label
+    }).join('\n\n')
 
   const now = new Date().toLocaleDateString('pt-BR')
   const row = [
