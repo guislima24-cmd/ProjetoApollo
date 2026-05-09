@@ -22,12 +22,16 @@ const ROLE_OVERRIDES: Record<string, MemberRole> = {
 // Mapeamento email → nome exato da aba na planilha real do comercial.
 // Necessário quando o nome da aba diverge do displayName da conta Google.
 const TAB_OVERRIDES: Record<string, string> = {
-  'guilherme.lima@ufabcjr.com.br':   'Gui Lima',
-  'guislima24@gmail.com':            'Gui Lima',
-  'felipe.ikeda@ufabcjr.com.br':     'Felipe',
-  'leonardo.aguilar@ufabcjr.com.br': 'Léo',
-  'maria.almeida@ufabcjr.com.br':    'Duda',
-  'tiago.santos@ufabcjr.com.br':     'Tiago',
+  'guilherme.lima@ufabcjr.com.br':    'Gui Lima',
+  'guislima24@gmail.com':             'Gui Lima',
+  'guilherme.midolli@ufabcjr.com.br': 'Gui Midolli',
+  'larissa.preto@ufabcjr.com.br':     'Larissa',
+  'gustavo.sumita@ufabcjr.com.br':    'Gustavo',
+  'anna.ferreira@ufabcjr.com.br':     'Anna',
+  'felipe.ikeda@ufabcjr.com.br':      'Felipe',
+  'leonardo.aguilar@ufabcjr.com.br':  'Léo',
+  'maria.almeida@ufabcjr.com.br':     'Duda',
+  'tiago.santos@ufabcjr.com.br':      'Tiago',
 }
 
 // Emails fora do domínio com acesso explícito (ex: devs, admin)
