@@ -51,8 +51,11 @@ export async function POST(req: NextRequest) {
 
   // Formata os decisores para salvar no Sheets (coluna Q)
   const contatos_sheets = linkedin_employees
-    .map(e => `${e.name}${e.role ? ` — ${e.role}` : ''}`)
-    .join('; ')
+    .map(e => {
+      const base = `${e.name}${e.role ? ` — ${e.role}` : ''}`
+      return e.profile_url ? `${base} (${e.profile_url})` : base
+    })
+    .join(' | ')
 
   let rowNum: number | null = null
   try {
