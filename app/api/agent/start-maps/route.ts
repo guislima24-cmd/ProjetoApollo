@@ -250,7 +250,6 @@ export async function POST(req: NextRequest) {
                 totalSaved++
                 addedCount++
                 recentSet.add(`${nome.toLowerCase().trim()}|${cidade.toLowerCase().trim()}`)
-                if (addedCount >= limite) break cityLoop
                 emit('lead_saved', {
                   name:       nome,
                   row_number: rowNum,
@@ -274,6 +273,7 @@ export async function POST(req: NextRequest) {
                   },
                 })
                 console.log(`[MAPS_AGENT] Salvo: ${nome} (linha ${rowNum})`)
+                if (addedCount >= limite) break cityLoop
               } catch (err) {
                 console.error('[MAPS_AGENT] Erro ao salvar lead:', err)
                 totalErrors++
