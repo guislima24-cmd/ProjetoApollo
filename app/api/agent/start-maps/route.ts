@@ -93,8 +93,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'setor e cidades são obrigatórios' }, { status: 400 })
   }
 
-  // Max pages capped by user's limite (ceil(limite/20), capped at MAX_PAGES)
-  const maxPages = Math.min(MAX_PAGES, Math.ceil(limite / 20))
+  const maxPages = MAX_PAGES
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -250,8 +249,8 @@ export async function POST(req: NextRequest) {
                 })
                 totalSaved++
                 addedCount++
-                // Add to in-memory set so subsequent pages don't re-add
                 recentSet.add(`${nome.toLowerCase().trim()}|${cidade.toLowerCase().trim()}`)
+                if (addedCount >= limite) break cityLoop
                 emit('lead_saved', {
                   name:       nome,
                   row_number: rowNum,
