@@ -1619,3 +1619,148 @@ export async function getMapsMonthlyUsage(): Promise<{
 
   return { textSearchCount, placeDetailsCount, totalCost }
 }
+
+// ── Maps Memory (dedup) ───────────────────────────────────────────────────────
+
+const MAPS_MEMORY_TAB = 'Maps Memory'
+const MAPS_MEMORY_HEADERS = [
+  'Filtro Hash', 'Setor', 'Cidade', 'Último Offset',
+  'Última Busca', 'Total Empresas Coletadas', 'Membro',
+]
+
+let mapsMemoryTabEnsured = false
+
+async function ensureMapsMemoryTab(): Promise<void> {
+  if (mapsMemoryTabEnsured) return
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+  const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === MAPS_MEMORY_TAB)
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: MAPS_MEMORY_TAB } } }] },
+    })
+  }
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${MAPS_MEMORY_TAB}'!A1:G1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [MAPS_MEMORY_HEADERS] },
+  }))
+  mapsMemoryTabEnsured = true
+}
+
+export interface MapsMemoryEntry {
+  hash:           string
+  setor:          string
+  cidade:         string
+  lastOffset:     number
+  lastSearch:     string | null
+  totalCollected: number
+  memberTab:      string
+}
+
+export async function getMapsMemoryEntry(hash: string): Promise<MapsMemoryEntry | null> {
+  await ensureMapsMemoryTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const res = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${MAPS_MEMORY_TAB}'!A:G`,
+  }))
+
+  const rows = (res.data.values ?? []) as string[][]
+  for (const row of rows.slice(1)) {
+    if ((row[0] ?? '') !== hash) continue
+    return {
+      hash:           row[0] ?? '',
+      setor:          row[1] ?? '',
+      cidade:         row[2] ?? '',
+      lastOffset:     parseInt(row[3] ?? '0', 10) || 0,
+      lastSearch:     row[4] || null,
+      totalCollected: parseInt(row[5] ?? '0', 10) || 0,
+      memberTab:      row[6] ?? '',
+    }
+  }
+  return null
+}
+
+export async function upsertMapsMemoryEntry(entry: MapsMemoryEntry): Promise<void> {
+  await ensureMapsMemoryTab()
+  const spreadsheetId = getSpreadsheetId()
+  const sheets = getSheets()
+
+  const res = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${MAPS_MEMORY_TAB}'!A:A`,
+  }))
+
+  const hashes = (res.data.values ?? []) as string[][]
+  let targetRow = -1
+  for (let i = 1; i < hashes.length; i++) {
+    if ((hashes[i]?.[0] ?? '') === entry.hash) { targetRow = i + 1; break }
+  }
+
+  const row = [
+    entry.hash,
+    entry.setor,
+    entry.cidade,
+    String(entry.lastOffset),
+    entry.lastSearch ?? '',
+    String(entry.totalCollected),
+    entry.memberTab,
+  ]
+
+  if (targetRow > 1) {
+    await withRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range:            `'${MAPS_MEMORY_TAB}'!A${targetRow}:G${targetRow}`,
+      valueInputOption: 'RAW',
+      requestBody:      { values: [row] },
+    }))
+  } else {
+    await withRetry(() => sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range:            `'${MAPS_MEMORY_TAB}'!A:G`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody:      { values: [row] },
+    }))
+  }
+}
+
+export async function getRecentMapsLeads(days: number): Promise<Array<{ empresa: string; cidade: string }>> {
+  try {
+    const spreadsheetId = getSpreadsheetId()
+    const sheets = getSheets()
+
+    const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }))
+    const exists = (meta.data.sheets ?? []).some(s => s.properties?.title === MAPS_TAB)
+    if (!exists) return []
+
+    const res = await withRetry(() => sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${MAPS_TAB}'!A:D`,
+    }))
+
+    const cutoff = Date.now() - days * 86_400_000
+    const rows   = (res.data.values ?? []) as string[][]
+    const results: Array<{ empresa: string; cidade: string }> = []
+
+    for (const row of rows.slice(1)) {
+      const dateStr = row[0] ?? ''
+      if (!dateStr) continue
+      const [d, m, y] = dateStr.split('/').map(Number)
+      if (!d || !m || !y) continue
+      if (new Date(y, m - 1, d).getTime() < cutoff) continue
+      const empresa = row[1] ?? ''
+      if (empresa) results.push({ empresa, cidade: row[3] ?? '' })
+    }
+
+    return results
+  } catch {
+    return []
+  }
+}
