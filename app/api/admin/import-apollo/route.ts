@@ -6,8 +6,6 @@ import { getMasterSnapshot, isDuplicate, distributeLeads } from '@/lib/sheets/di
 
 export const dynamic = 'force-dynamic'
 
-const REQUIRED_COLS = ['Company', 'Industry', 'Person Name', 'Title', 'Email', 'City']
-
 async function guardAdmin() {
   const session = await auth()
   if (!session?.user?.email || !isAdminEmail(session.user.email)) {
@@ -16,11 +14,6 @@ async function guardAdmin() {
   return null
 }
 
-/**
- * POST com action=preview → retorna stats sem inserir nada.
- * POST com action=distribute → insere e distribui.
- * Body: multipart/form-data com campo "file" (CSV) e "action".
- */
 export async function POST(req: NextRequest) {
   const denied = await guardAdmin()
   if (denied) return denied
@@ -44,16 +37,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'CSV vazio ou inválido' }, { status: 400 })
   }
 
-  // Valida colunas obrigatórias
-  const headers    = Object.keys(raw[0])
-  const missing    = REQUIRED_COLS.filter(c => !headers.some(h => h.toLowerCase() === c.toLowerCase()))
-  if (missing.length) {
-    return Response.json({
-      error: `Colunas obrigatórias ausentes: ${missing.join(', ')}`,
-    }, { status: 400 })
-  }
-
-  const rows    = raw.map(mapApolloRow).filter(r => r.nome_empresa)
+  // mapApolloRow lida com aliases flexíveis — filtra só por empresa presente
+  const rows = raw.map(mapApolloRow).filter(r => r.nome_empresa)
   const snapshot = await getMasterSnapshot()
 
   const novos      = rows.filter(r => !isDuplicate(r, snapshot))

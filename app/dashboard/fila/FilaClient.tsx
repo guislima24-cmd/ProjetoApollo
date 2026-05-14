@@ -18,6 +18,12 @@ const CAMPO_POR_ABA: Record<Aba, keyof LeadMaster> = {
   followups:  'followup_1',
 }
 
+const LABEL_ABA: Record<Aba, string> = {
+  conexoes:   'Conexões',
+  boas_vindas: 'Boas-vindas',
+  followups:  'Follow-ups',
+}
+
 declare const chrome: any
 
 export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string; email: string }) {
@@ -36,6 +42,7 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
     setError(null)
     try {
       const res  = await fetch('/api/leads/fila')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json() as FilaData
       setFila(data)
     } catch {
@@ -47,15 +54,13 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
 
   useEffect(() => { carregar() }, [carregar])
 
-  // Checa se extensão está conectada
   useEffect(() => {
     if (typeof chrome === 'undefined' || !chrome?.runtime?.sendMessage || !extensionId) return
-    chrome.runtime.sendMessage(extensionId, { type: 'AGENT_PING' }, (resp: any) => {
+    chrome.runtime.sendMessage(extensionId, { type: 'LI_PING' }, (resp: any) => {
       setExtensaoOk(!!resp?.ok)
     })
   }, [extensionId])
 
-  // Keyboard shortcut: E = enviar, Esc = pular
   useEffect(() => {
     const leads = abaAtual(fila, aba)
     if (!leads.length) return
@@ -74,12 +79,12 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
     if (pendingId) return
     setPendingId(lead.id_lead)
 
-    const campo = CAMPO_POR_ABA[aba] as string
+    const campo    = CAMPO_POR_ABA[aba] as string
     const mensagem = mensagensEditadas[lead.id_lead] ?? (lead[CAMPO_POR_ABA[aba]] as string)
 
     if (action === 'enviar' && extensaoOk) {
       const linkedinUrl = aba === 'conexoes' ? lead.linkedin_decisor : lead.link_conversa_linkedin
-      const tipoAcao = aba === 'conexoes' ? 'enviar_conexao' : 'enviar_mensagem'
+      const tipoAcao    = aba === 'conexoes' ? 'enviar_conexao' : 'enviar_mensagem'
       chrome.runtime.sendMessage(extensionId, {
         type: 'LI_SEND_REQUEST',
         action: tipoAcao,
@@ -124,102 +129,111 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
   const leads = fila ? abaAtual(fila, aba) : []
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white">
-      <div className="max-w-3xl mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-xl font-bold">Bom dia, {nomeUsuario}</h1>
-          <p className="text-gray-400 text-sm mt-0.5">Sua fila de hoje</p>
-        </div>
+    <main style={{ maxWidth: 760, margin: '0 auto', padding: '32px 20px' }}>
 
-        {/* Resumo */}
-        {fila && (
-          <div className="grid grid-cols-3 gap-3 mb-6">
-            <ResumoCard emoji="📨" label="Conexões pendentes" valor={fila.totais.conexoes} />
-            <ResumoCard emoji="💬" label="Boas-vindas"         valor={fila.totais.boas_vindas} />
-            <ResumoCard emoji="🔁" label="Follow-ups"         valor={fila.totais.followups} />
-          </div>
-        )}
-
-        {/* Status extensão */}
-        <div className={`text-xs mb-4 flex items-center gap-1.5 ${extensaoOk ? 'text-[#00e5bf]' : 'text-yellow-500'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${extensaoOk ? 'bg-[#00e5bf]' : 'bg-yellow-500'}`} />
-          {extensaoOk ? 'Extensão conectada — envio automático ativo' : 'Extensão offline — use "Marcar enviado" manualmente'}
-        </div>
-
-        {/* Abas */}
-        <div className="flex gap-1 mb-5 bg-white/5 rounded-xl p-1">
-          {(['conexoes', 'boas_vindas', 'followups'] as Aba[]).map(a => (
-            <button
-              key={a}
-              onClick={() => setAba(a)}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium transition
-                ${aba === a ? 'bg-[#00e5bf] text-black' : 'text-gray-400 hover:text-white'}`}
-            >
-              {LABEL_ABA[a]}
-            </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        {loading && <p className="text-gray-500 text-sm text-center py-8">Carregando...</p>}
-        {error   && <p className="text-red-400 text-sm text-center py-4">{error}</p>}
-
-        {!loading && !error && leads.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            <p className="text-2xl mb-2">✓</p>
-            <p className="text-sm">Nenhum lead nesta fila agora.</p>
-          </div>
-        )}
-
-        <div className="space-y-4">
-          {leads.map(lead => (
-            <LeadCard
-              key={lead.id_lead}
-              lead={lead}
-              aba={aba}
-              mensagemEditada={mensagensEditadas[lead.id_lead] ?? null}
-              onMensagemEdit={msg =>
-                setMensagensEditadas(prev => ({ ...prev, [lead.id_lead]: msg }))
-              }
-              onAcao={action => executarAcao(lead, action)}
-              loading={pendingId === lead.id_lead}
-              extensaoOk={extensaoOk}
-            />
-          ))}
-        </div>
-
-        {leads.length > 0 && (
-          <p className="text-center text-gray-600 text-xs mt-6">
-            Atalho: <kbd className="bg-white/10 px-1 rounded">E</kbd> envia · <kbd className="bg-white/10 px-1 rounded">Esc</kbd> pula
-          </p>
-        )}
+      {/* Header */}
+      <div style={{ marginBottom: 28 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--cream)', fontFamily: 'Syne, sans-serif' }}>
+          Bom dia, {nomeUsuario}
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>Sua fila de hoje</p>
       </div>
-    </div>
+
+      {/* Cards de totais */}
+      {fila && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+          {([
+            { label: 'Conexões',   valor: fila.totais.conexoes },
+            { label: 'Boas-vindas', valor: fila.totais.boas_vindas },
+            { label: 'Follow-ups', valor: fila.totais.followups },
+          ] as const).map(({ label, valor }) => (
+            <div key={label} className="card" style={{ padding: '14px 16px' }}>
+              <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--cream)', fontFamily: 'Syne, sans-serif' }}>{valor}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Status extensão */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, marginBottom: 20,
+        fontSize: 12, color: extensaoOk ? 'var(--green)' : 'var(--gold)',
+      }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: extensaoOk ? 'var(--green)' : 'var(--gold)',
+          display: 'inline-block',
+        }} />
+        {extensaoOk ? 'Extensão conectada — envio automático ativo' : 'Extensão offline — use "Marcar enviado" manualmente'}
+      </div>
+
+      {/* Abas */}
+      <div style={{
+        display: 'flex', gap: 4, marginBottom: 20,
+        background: 'var(--bg-card)', border: '1px solid var(--border)',
+        borderRadius: 10, padding: 4,
+      }}>
+        {(['conexoes', 'boas_vindas', 'followups'] as Aba[]).map(a => (
+          <button
+            key={a}
+            onClick={() => setAba(a)}
+            style={{
+              flex: 1, padding: '7px 0', borderRadius: 7, border: 'none',
+              fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              fontFamily: 'Syne, sans-serif',
+              background: aba === a ? 'var(--green-primary)' : 'transparent',
+              color: aba === a ? 'var(--cream)' : 'var(--text-muted)',
+              transition: 'all 0.15s',
+            }}
+          >
+            {LABEL_ABA[a]}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      {loading && <p style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '32px 0' }}>Carregando...</p>}
+      {error   && <p style={{ color: 'var(--red)', fontSize: 13, textAlign: 'center', padding: '16px 0' }}>{error}</p>}
+
+      {!loading && !error && leads.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-muted)' }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>✓</div>
+          <p style={{ fontSize: 13 }}>Nenhum lead nesta fila agora.</p>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {leads.map(lead => (
+          <LeadCard
+            key={lead.id_lead}
+            lead={lead}
+            aba={aba}
+            mensagemEditada={mensagensEditadas[lead.id_lead] ?? null}
+            onMensagemEdit={msg => setMensagensEditadas(prev => ({ ...prev, [lead.id_lead]: msg }))}
+            onAcao={action => executarAcao(lead, action)}
+            loading={pendingId === lead.id_lead}
+            extensaoOk={extensaoOk}
+          />
+        ))}
+      </div>
+
+      {leads.length > 0 && (
+        <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, marginTop: 24 }}>
+          Atalho:{' '}
+          <kbd style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px' }}>E</kbd>
+          {' '}envia ·{' '}
+          <kbd style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px' }}>Esc</kbd>
+          {' '}pula
+        </p>
+      )}
+    </main>
   )
-}
-
-// ── Componentes ───────────────────────────────────────────────────────────────
-
-const LABEL_ABA: Record<Aba, string> = {
-  conexoes:   'Conexões',
-  boas_vindas: 'Boas-vindas',
-  followups:  'Follow-ups',
 }
 
 function abaAtual(fila: FilaData | null, aba: Aba): LeadMaster[] {
   if (!fila) return []
   return fila[aba === 'boas_vindas' ? 'boas_vindas' : aba] ?? []
-}
-
-function ResumoCard({ emoji, label, valor }: { emoji: string; label: string; valor: number }) {
-  return (
-    <div className="bg-[#111] border border-white/10 rounded-xl p-4">
-      <div className="text-xl mb-1">{emoji}</div>
-      <div className="text-2xl font-bold">{valor}</div>
-      <div className="text-xs text-gray-500">{label}</div>
-    </div>
-  )
 }
 
 function LeadCard({ lead, aba, mensagemEditada, onMensagemEdit, onAcao, loading, extensaoOk }: {
@@ -231,8 +245,8 @@ function LeadCard({ lead, aba, mensagemEditada, onMensagemEdit, onAcao, loading,
   loading:         boolean
   extensaoOk:      boolean
 }) {
-  const campoMsg   = CAMPO_POR_ABA[aba]
-  const mensagem   = mensagemEditada ?? (lead[campoMsg] as string) ?? ''
+  const campoMsg    = CAMPO_POR_ABA[aba]
+  const mensagem    = mensagemEditada ?? (lead[campoMsg] as string) ?? ''
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const linkedinUrl = aba === 'conexoes'
@@ -244,24 +258,34 @@ function LeadCard({ lead, aba, mensagemEditada, onMensagemEdit, onAcao, loading,
     : null
 
   return (
-    <div className={`bg-[#111] border rounded-xl p-5 transition ${loading ? 'opacity-50 pointer-events-none' : 'border-white/10 hover:border-white/20'}`}>
+    <div className="card" style={{
+      opacity: loading ? 0.5 : 1,
+      pointerEvents: loading ? 'none' : 'auto',
+      transition: 'opacity 0.15s',
+    }}>
       {/* Cabeçalho */}
-      <div className="flex items-start justify-between mb-3">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
         <div>
-          <div className="font-semibold">{lead.nome_decisor || '—'}</div>
-          <div className="text-sm text-gray-400">
+          <div style={{ fontWeight: 700, color: 'var(--cream)', fontSize: 15 }}>
+            {lead.nome_decisor || '—'}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
             {lead.cargo_decisor || 'Cargo não informado'}
             {' · '}
-            <span className="text-gray-300">{lead.nome_empresa}</span>
+            <span style={{ color: 'var(--cream)' }}>{lead.nome_empresa}</span>
           </div>
-          {lead.setor && <div className="text-xs text-gray-600 mt-0.5">{lead.setor}{lead.cidade ? ` · ${lead.cidade}` : ''}</div>}
+          {lead.setor && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+              {lead.setor}{lead.cidade ? ` · ${lead.cidade}` : ''}
+            </div>
+          )}
         </div>
         {linkedinUrl && (
           <a
             href={linkedinUrl}
             target="_blank"
             rel="noreferrer"
-            className="text-xs text-[#00e5bf] hover:underline whitespace-nowrap ml-4"
+            style={{ fontSize: 12, color: 'var(--green-primary)', textDecoration: 'none', whiteSpace: 'nowrap', marginLeft: 16 }}
           >
             Ver LinkedIn ↗
           </a>
@@ -269,45 +293,46 @@ function LeadCard({ lead, aba, mensagemEditada, onMensagemEdit, onAcao, loading,
       </div>
 
       {aba === 'conexoes' && lead.gancho_personalizado && (
-        <div className="text-xs text-yellow-400/80 mb-3 italic">{lead.gancho_personalizado}</div>
+        <div style={{ fontSize: 12, color: 'var(--gold)', marginBottom: 12, fontStyle: 'italic' }}>
+          {lead.gancho_personalizado}
+        </div>
       )}
 
       {aba !== 'conexoes' && diasConexao !== null && diasConexao > 0 && (
-        <div className="text-xs text-orange-400/80 mb-2">Aceitou há {diasConexao} dias</div>
+        <div style={{ fontSize: 12, color: 'var(--yellow)', marginBottom: 8 }}>
+          Aceitou há {diasConexao} dias
+        </div>
       )}
 
-      {/* Mensagem editável */}
+      {/* Textarea */}
       <textarea
         ref={textareaRef}
         value={mensagem}
         onChange={e => onMensagemEdit(e.target.value)}
         rows={5}
-        className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg p-3 text-sm text-gray-200
-          resize-y focus:outline-none focus:border-[#00e5bf]/50 mb-4"
+        className="input"
+        style={{ resize: 'vertical', marginBottom: 14 }}
         placeholder="Mensagem..."
       />
 
       {/* Botões */}
-      <div className="flex gap-2 flex-wrap">
-        <button
-          onClick={() => onAcao('enviar')}
-          disabled={loading}
-          className="px-4 py-2 bg-[#00e5bf] text-black text-sm font-semibold rounded-lg
-            hover:bg-[#00cca8] disabled:opacity-40 transition"
-        >
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button className="btn-primary" onClick={() => onAcao('enviar')} disabled={loading}>
           {extensaoOk ? 'Enviar' : 'Marcar enviado'}
         </button>
-        <button
-          onClick={() => onAcao('pular')}
-          disabled={loading}
-          className="px-4 py-2 bg-white/10 text-sm rounded-lg hover:bg-white/20 transition"
-        >
+        <button className="btn-secondary" onClick={() => onAcao('pular')} disabled={loading}>
           Pular
         </button>
         <button
           onClick={() => onAcao('descartar')}
           disabled={loading}
-          className="px-4 py-2 text-red-400/70 text-sm rounded-lg hover:text-red-400 hover:bg-red-900/20 transition"
+          style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            fontSize: 13, color: 'var(--red)', padding: '9px 12px', borderRadius: 8,
+            opacity: loading ? 0.4 : 0.7, transition: 'opacity 0.15s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+          onMouseLeave={e => (e.currentTarget.style.opacity = loading ? '0.4' : '0.7')}
         >
           Descartar
         </button>

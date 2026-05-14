@@ -11,34 +11,34 @@ interface MembroStats extends MemberDistribution {
 }
 
 interface DashboardData {
-  statusCounts:   Record<string, number>
-  membros:        MembroStats[]
-  taxaAceitacao:  number
-  taxaResposta:   number
-  totalLeads:     number
+  statusCounts:  Record<string, number>
+  membros:       MembroStats[]
+  taxaAceitacao: number
+  taxaResposta:  number
+  totalLeads:    number
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  nao_atribuido:        'Não atribuído',
-  nao_contatado:        'Não contatado',
-  enriquecido:          'Enriquecido',
-  conexao_enviada:      'Conexão enviada',
-  conexao_aceita:       'Conexão aceita',
-  mensagem_enviada:     'Mensagem enviada',
-  followup_1_enviado:   'Follow-up 1',
-  followup_2_enviado:   'Follow-up 2',
-  respondeu:            'Respondeu',
-  descartado:           'Descartado',
-  erro_enriquecimento:  'Erro enriquecimento',
+  nao_atribuido:       'Não atribuído',
+  nao_contatado:       'Não contatado',
+  enriquecido:         'Enriquecido',
+  conexao_enviada:     'Conexão enviada',
+  conexao_aceita:      'Conexão aceita',
+  mensagem_enviada:    'Mensagem enviada',
+  followup_1_enviado:  'Follow-up 1',
+  followup_2_enviado:  'Follow-up 2',
+  respondeu:           'Respondeu',
+  descartado:          'Descartado',
+  erro_enriquecimento: 'Erro enriquecimento',
 }
 
 export default function DashboardClient() {
-  const [data, setData]             = useState<DashboardData | null>(null)
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState<string | null>(null)
-  const [pausando, setPausando]     = useState<string | null>(null)
-  const [enriquecendo, setEnriq]    = useState(false)
-  const [enrichMsg, setEnrichMsg]   = useState<string | null>(null)
+  const [data, setData]           = useState<DashboardData | null>(null)
+  const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState<string | null>(null)
+  const [pausando, setPausando]   = useState<string | null>(null)
+  const [enriquecendo, setEnriq]  = useState(false)
+  const [enrichMsg, setEnrichMsg] = useState<string | null>(null)
 
   const carregar = useCallback(async () => {
     setLoading(true)
@@ -66,12 +66,8 @@ export default function DashboardClient() {
         body: JSON.stringify({ email }),
       })
       const d = await res.json()
-      if (d.ok) {
-        alert(`${d.redistribuidos} leads redistribuídos com sucesso.`)
-        await carregar()
-      } else {
-        alert(d.error ?? 'Erro ao pausar membro.')
-      }
+      if (d.ok) { alert(`${d.redistribuidos} leads redistribuídos.`); await carregar() }
+      else alert(d.error ?? 'Erro ao pausar membro.')
     } catch {
       alert('Erro de rede.')
     } finally {
@@ -85,9 +81,7 @@ export default function DashboardClient() {
     try {
       const res  = await fetch('/api/admin/enrich-leads', { method: 'POST' })
       const d    = await res.json()
-      setEnrichMsg(d.ok
-        ? `Enriquecidos: ${d.enriquecidos}, Erros: ${d.erros}`
-        : (d.error ?? 'Erro'))
+      setEnrichMsg(d.ok ? `Enriquecidos: ${d.processados} · Erros: ${d.erros}` : (d.error ?? 'Erro'))
       if (d.ok) await carregar()
     } catch {
       setEnrichMsg('Erro de rede.')
@@ -97,118 +91,131 @@ export default function DashboardClient() {
   }
 
   if (loading) return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
-      <p className="text-gray-500 text-sm">Carregando...</p>
-    </div>
+    <main style={{ maxWidth: 980, margin: '0 auto', padding: '32px 20px', textAlign: 'center' }}>
+      <div className="spinner" style={{ width: 20, height: 20 }} />
+    </main>
   )
 
   if (error || !data) return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
-      <p className="text-red-400 text-sm">{error ?? 'Sem dados'}</p>
-    </div>
+    <main style={{ maxWidth: 980, margin: '0 auto', padding: '32px 20px' }}>
+      <p style={{ color: 'var(--red)', fontSize: 13 }}>{error ?? 'Sem dados'}</p>
+    </main>
   )
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white">
-      <div className="max-w-5xl mx-auto px-4 py-8">
+    <main style={{ maxWidth: 980, margin: '0 auto', padding: '32px 20px' }}>
 
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-xl font-bold">Painel Admin</h1>
-            <p className="text-gray-400 text-sm mt-0.5">{data.totalLeads} leads no sistema</p>
-          </div>
-          <button
-            onClick={rodarEnriquecimento}
-            disabled={enriquecendo}
-            className="px-4 py-2 bg-[#00e5bf] text-black text-sm font-semibold rounded-lg
-              hover:bg-[#00cca8] disabled:opacity-40 transition"
-          >
-            {enriquecendo ? 'Enriquecendo...' : 'Rodar enriquecimento'}
-          </button>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--cream)', fontFamily: 'Syne, sans-serif' }}>
+            Painel Admin
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
+            {data.totalLeads} leads no sistema
+          </p>
         </div>
-
-        {enrichMsg && (
-          <div className="mb-6 bg-white/5 rounded-xl p-4 text-sm text-gray-300">
-            {enrichMsg}
-          </div>
-        )}
-
-        {/* KPIs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
-          <KpiCard label="Total de leads"    valor={data.totalLeads}         />
-          <KpiCard label="Taxa de aceitação" valor={`${data.taxaAceitacao}%`} />
-          <KpiCard label="Taxa de resposta"  valor={`${data.taxaResposta}%`}  />
-          <KpiCard label="Responderam"       valor={data.statusCounts['respondeu'] ?? 0} />
-        </div>
-
-        {/* Status breakdown */}
-        <div className="bg-[#111] border border-white/10 rounded-xl p-5 mb-8">
-          <h2 className="text-sm font-semibold text-gray-300 mb-4">Leads por status</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {Object.entries(STATUS_LABELS).map(([k, label]) => (
-              <div key={k} className="flex items-center justify-between text-sm">
-                <span className="text-gray-400">{label}</span>
-                <span className="font-semibold">{data.statusCounts[k] ?? 0}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Members table */}
-        <div className="bg-[#111] border border-white/10 rounded-xl overflow-hidden">
-          <div className="p-5 border-b border-white/10">
-            <h2 className="text-sm font-semibold text-gray-300">Membros</h2>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-gray-500 text-xs border-b border-white/5">
-                  <th className="text-left p-3 pl-5">Nome</th>
-                  <th className="text-right p-3">Ativos</th>
-                  <th className="text-right p-3">Enviados (semana)</th>
-                  <th className="text-right p-3">Na fila</th>
-                  <th className="text-right p-3">Responderam</th>
-                  <th className="p-3 pr-5"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.membros.map(m => (
-                  <tr key={m.email} className="border-b border-white/5 hover:bg-white/[0.02] transition">
-                    <td className="p-3 pl-5">
-                      <div className="font-medium">{m.nome}</div>
-                      <div className="text-gray-500 text-xs">{m.email}</div>
-                    </td>
-                    <td className="p-3 text-right">{m.total_ativos}</td>
-                    <td className="p-3 text-right">{m.enviados_semana}</td>
-                    <td className="p-3 text-right">{m.pendentes_fila}</td>
-                    <td className="p-3 text-right text-[#00e5bf]">{m.responderam}</td>
-                    <td className="p-3 pr-5 text-right">
-                      <button
-                        onClick={() => pausarMembro(m.email, m.nome)}
-                        disabled={pausando === m.email}
-                        className="text-xs text-orange-400 hover:text-orange-300 disabled:opacity-40 transition"
-                      >
-                        {pausando === m.email ? 'Redistribuindo...' : 'Pausar'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
+        <button className="btn-primary" onClick={rodarEnriquecimento} disabled={enriquecendo}>
+          {enriquecendo ? 'Enriquecendo...' : 'Rodar enriquecimento'}
+        </button>
       </div>
-    </div>
+
+      {enrichMsg && (
+        <div className="card" style={{ marginBottom: 20, fontSize: 13, color: 'var(--text-secondary)' }}>
+          {enrichMsg}
+        </div>
+      )}
+
+      {/* KPIs */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
+        <KpiCard label="Total de leads"    valor={data.totalLeads} />
+        <KpiCard label="Taxa de aceitação" valor={`${data.taxaAceitacao}%`} highlight />
+        <KpiCard label="Taxa de resposta"  valor={`${data.taxaResposta}%`} highlight />
+        <KpiCard label="Responderam"       valor={data.statusCounts['respondeu'] ?? 0} />
+      </div>
+
+      {/* Status */}
+      <div className="card" style={{ marginBottom: 24 }}>
+        <p className="section-label" style={{ marginBottom: 14 }}>Leads por status</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+          {Object.entries(STATUS_LABELS).map(([k, label]) => (
+            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+              <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+              <span style={{ fontWeight: 700, color: 'var(--cream)' }}>{data.statusCounts[k] ?? 0}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Membros */}
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+          <p className="section-label">Membros</p>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                {['Nome', 'Ativos', 'Enviados (semana)', 'Na fila', 'Responderam', ''].map(col => (
+                  <th key={col} style={{
+                    textAlign: col === 'Nome' ? 'left' : 'right',
+                    padding: '10px 16px',
+                    fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+                    letterSpacing: '0.07em', color: 'var(--text-muted)', whiteSpace: 'nowrap',
+                  }}>{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.membros.map((m, i) => (
+                <tr
+                  key={m.email}
+                  style={{ borderBottom: i < data.membros.length - 1 ? '1px solid var(--border)' : 'none' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <td style={{ padding: '12px 16px' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--cream)' }}>{m.nome}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{m.email}</div>
+                  </td>
+                  <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--text-secondary)' }}>{m.total_ativos}</td>
+                  <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--text-secondary)' }}>{m.enviados_semana}</td>
+                  <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--text-secondary)' }}>{m.pendentes_fila}</td>
+                  <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--green)', fontWeight: 600 }}>{m.responderam}</td>
+                  <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                    <button
+                      onClick={() => pausarMembro(m.email, m.nome)}
+                      disabled={pausando === m.email}
+                      style={{
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        fontSize: 12, color: 'var(--yellow)', opacity: pausando === m.email ? 0.4 : 1,
+                      }}
+                    >
+                      {pausando === m.email ? 'Redistribuindo...' : 'Pausar'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
   )
 }
 
-function KpiCard({ label, valor }: { label: string; valor: number | string }) {
+function KpiCard({ label, valor, highlight }: { label: string; valor: number | string; highlight?: boolean }) {
   return (
-    <div className="bg-[#111] border border-white/10 rounded-xl p-4">
-      <div className="text-2xl font-bold mb-1">{valor}</div>
-      <div className="text-xs text-gray-500">{label}</div>
+    <div style={{
+      background: 'var(--bg-card)',
+      border: `1px solid ${highlight ? 'var(--green-primary)' : 'var(--border)'}`,
+      borderRadius: 10, padding: '14px 16px',
+    }}>
+      <div style={{ fontSize: 26, fontWeight: 800, color: highlight ? 'var(--green-primary)' : 'var(--cream)', fontFamily: 'Syne, sans-serif' }}>
+        {valor}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{label}</div>
     </div>
   )
 }

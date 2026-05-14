@@ -48,7 +48,7 @@ function rowToLead(row: string[]): LeadMaster {
 
 export async function GET(_req: NextRequest) {
   const session = await auth()
-  if (!session?.user?.memberTab) {
+  if (!session?.user?.email) {
     return Response.json({ error: 'Não autenticado' }, { status: 401 })
   }
 
@@ -56,9 +56,18 @@ export async function GET(_req: NextRequest) {
   const spreadsheetId = getSpreadsheetId()
   const sheets = getSheets()
 
-  const res = await withRetry(() =>
-    sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:${LAST_COL}` }),
-  )
+  let res
+  try {
+    res = await withRetry(() =>
+      sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:${LAST_COL}` }),
+    )
+  } catch (err) {
+    console.error('[fila] Sheets error:', err)
+    return Response.json({
+      conexoes: [], boas_vindas: [], followups: [],
+      totais: { conexoes: 0, boas_vindas: 0, followups: 0 },
+    })
+  }
 
   const rows    = (res.data.values ?? []) as string[][]
   const emailLow = email.toLowerCase().trim()
