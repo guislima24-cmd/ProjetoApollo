@@ -119,11 +119,18 @@ export default function SessionHeader() {
             <NavLink href="/gerador?tab=bulk"   exact>Em Massa</NavLink>
             <NavLink href="/prospectar">Prospectar</NavLink>
             <NavLink href="/dashboard">Dashboard</NavLink>
+            <NavLink href="/dashboard/fila">Fila</NavLink>
             <NavLink href="/descoberta">Descobrir Leads</NavLink>
             <NavLink href="/qualificar">Qualificar Lead</NavLink>
             <NavLink href="/agente">Agente</NavLink>
             <NavLink href="/instalar">↓ Extensão</NavLink>
             <PlanilhaButton memberTab={session.user?.memberTab ?? ''} />
+            {(session.user?.role === 'manager' || session.user?.role === 'pre-sales-leader') && (
+              <>
+                <NavLink href="/admin/import-apollo">Importar</NavLink>
+                <NavLink href="/admin/dashboard">Admin</NavLink>
+              </>
+            )}
           </div>
         )}
       </nav>
