@@ -15,8 +15,9 @@ const VALID_TRANSITIONS: Record<LeadStatus, LeadStatus[]> = {
   mensagem_enviada:   ['followup_1_enviado', 'respondeu'],
   followup_1_enviado: ['followup_2_enviado', 'respondeu'],
   followup_2_enviado: ['respondeu', 'descartado'],
-  respondeu:          [],
-  descartado:         [],
+  respondeu:              [],
+  descartado:             [],
+  erro_enriquecimento:    ['nao_contatado'],  // permite retentar
 }
 
 export function isValidTransition(from: LeadStatus, to: LeadStatus): boolean {

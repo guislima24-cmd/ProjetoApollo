@@ -9,6 +9,7 @@ export type LeadStatus =
   | 'followup_2_enviado'
   | 'respondeu'
   | 'descartado'
+  | 'erro_enriquecimento'
 
 export type LeadFonte = 'apollo_csv' | 'manual'
 
