@@ -126,10 +126,7 @@ export default function SessionHeader() {
             <NavLink href="/instalar">↓ Extensão</NavLink>
             <PlanilhaButton memberTab={session.user?.memberTab ?? ''} />
             {(session.user?.role === 'manager' || session.user?.role === 'pre-sales-leader') && (
-              <>
-                <NavLink href="/admin/import-apollo">Importar</NavLink>
-                <NavLink href="/admin/dashboard">Admin</NavLink>
-              </>
+              <NavLink href="/admin/dashboard">Admin</NavLink>
             )}
           </div>
         )}
