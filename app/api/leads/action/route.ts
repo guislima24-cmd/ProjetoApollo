@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
 import { updateLeadStatus } from '@/lib/sheets/lead-status'
 import { getSheets, getSpreadsheetId, withRetry } from '@/lib/sheets/client'
-import { incrementContactCount } from '@/lib/sheets'
+import { appendProspection, incrementContactCount } from '@/lib/sheets'
 import { getTabByEmail } from '@/lib/members.config'
 import type { LeadStatus } from '@/lib/types/lead'
 
@@ -141,25 +141,39 @@ export async function POST(req: NextRequest) {
 
       await updateLeadStatus(lead_id, nextStatus, email)
 
-      // Atualiza coluna J ("Quantos contatos?") na aba individual do membro
-      // apenas quando há interação real (pitch ou followup enviado)
+      // Preenche aba individual do membro (conexao_enviada) e incrementa coluna J (pitch/followups)
       const INCREMENTA_J: LeadStatus[] = ['mensagem_enviada', 'followup_1_enviado', 'followup_2_enviado']
-      if (INCREMENTA_J.includes(nextStatus)) {
+      const precisaLerRow = nextStatus === 'conexao_enviada' || INCREMENTA_J.includes(nextStatus)
+      if (precisaLerRow) {
         const memberTab = getTabByEmail(email)
         if (memberTab) {
-          // Lê empresa e nome do decisor do Leads_Master para localizar a linha
           try {
             const spreadsheetId = getSpreadsheetId()
             const sheets = getSheets()
             const colsRes = await withRetry(() =>
-              sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:I` }),
+              sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:K` }),
             )
             const rows = (colsRes.data.values ?? []) as string[][]
             const leadRow = rows.find((r, i) => i > 0 && r[0] === lead_id)
             if (leadRow) {
-              const nomeEmpresa = leadRow[1] ?? ''   // B
-              const nomeDecisoa = leadRow[8] ?? ''   // I
-              await incrementContactCount(memberTab, nomeEmpresa, nomeDecisoa).catch(() => {})
+              const nomeEmpresa     = leadRow[1]  ?? ''  // B
+              const setor           = leadRow[2]  ?? ''  // C
+              const nomeDecisoa     = leadRow[8]  ?? ''  // I
+              const linkedinDecisoa = leadRow[10] ?? ''  // K
+
+              if (nextStatus === 'conexao_enviada') {
+                await appendProspection(memberTab, {
+                  nome:    nomeDecisoa,
+                  empresa: nomeEmpresa,
+                  canal:   'LinkedIn',
+                  setor,
+                  contato: linkedinDecisoa,
+                }).catch(() => {})
+              }
+
+              if (INCREMENTA_J.includes(nextStatus)) {
+                await incrementContactCount(memberTab, nomeEmpresa, nomeDecisoa).catch(() => {})
+              }
             }
           } catch { /* não bloqueia o fluxo principal */ }
         }

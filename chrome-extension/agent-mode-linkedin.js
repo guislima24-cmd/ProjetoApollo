@@ -26,12 +26,12 @@ async function liWaitForTab(tabId, timeoutMs = 25000) {
   return false
 }
 
-// ── Envio de conexão com nota ─────────────────────────────────────────────────
+// ── Envio de conexão SEM nota (conta gratuita do LinkedIn) ───────────────────
 
-async function enviarConexao(tabId, nota) {
+async function enviarConexao(tabId) {
   const result = await chrome.scripting.executeScript({
     target: { tabId },
-    func: async (notaTexto) => {
+    func: async () => {
       function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
       function findBtn(keywords) {
@@ -83,39 +83,13 @@ async function enviarConexao(tabId, nota) {
         }
       }
 
-      // "Adicionar nota"
-      const addNoteBtn = findBtn(['add a note', 'adicionar nota'])
-      if (!addNoteBtn) {
-        // Sem opção de nota — tenta enviar direto
-        const sendDirect = findBtn(['send', 'enviar', 'send without a note', 'enviar sem nota'])
-        if (sendDirect) { sendDirect.click(); return { ok: true, semNota: true } }
-        return { ok: false, error: 'Modal de conexão não apareceu — verifique o LinkedIn' }
-      }
+      // Envia direto SEM nota — "Send without a note" ou "Send"
+      const sendBtn = findBtn(['send without a note', 'enviar sem nota', 'send', 'enviar'])
+      if (sendBtn) { sendBtn.click(); return { ok: true } }
 
-      addNoteBtn.click()
-      await sleep(1000)
-
-      // Preenche a nota
-      const textarea = document.querySelector('textarea[name="message"]')
-        ?? document.querySelector('.send-invite__custom-message')
-        ?? document.querySelector('textarea[id*="custom-message"]')
-        ?? document.querySelector('textarea')
-      if (!textarea) return { ok: false, error: 'Campo de nota não encontrado' }
-
-      // Trigger correto para React: usa native setter
-      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      if (nativeSetter) nativeSetter.call(textarea, notaTexto)
-      else textarea.value = notaTexto
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-      textarea.dispatchEvent(new Event('change', { bubbles: true }))
-      await sleep(700)
-
-      const sendBtn = findBtn(['send', 'enviar'])
-      if (!sendBtn) return { ok: false, error: 'Botão Enviar não encontrado no modal' }
-      sendBtn.click()
-      return { ok: true }
+      return { ok: false, error: 'Modal de conexão não apareceu — verifique o LinkedIn' }
     },
-    args: [nota],
+    args: [],
   })
   return result?.[0]?.result ?? { ok: false, error: 'Erro no scripting' }
 }
@@ -198,7 +172,7 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
 
         let resultado
         if (action === 'enviar_conexao') {
-          resultado = await enviarConexao(tabId, mensagem)
+          resultado = await enviarConexao(tabId)
         } else if (action === 'enviar_mensagem') {
           resultado = await enviarMensagem(tabId, mensagem)
         } else {
