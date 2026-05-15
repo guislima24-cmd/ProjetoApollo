@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
 import { updateLeadStatus } from '@/lib/sheets/lead-status'
 import { getSheets, getSpreadsheetId, withRetry } from '@/lib/sheets/client'
+import { incrementContactCount } from '@/lib/sheets'
+import { getTabByEmail } from '@/lib/members.config'
 import type { LeadStatus } from '@/lib/types/lead'
 
 export const dynamic = 'force-dynamic'
@@ -138,6 +140,31 @@ export async function POST(req: NextRequest) {
       }
 
       await updateLeadStatus(lead_id, nextStatus, email)
+
+      // Atualiza coluna J ("Quantos contatos?") na aba individual do membro
+      // apenas quando há interação real (pitch ou followup enviado)
+      const INCREMENTA_J: LeadStatus[] = ['mensagem_enviada', 'followup_1_enviado', 'followup_2_enviado']
+      if (INCREMENTA_J.includes(nextStatus)) {
+        const memberTab = getTabByEmail(email)
+        if (memberTab) {
+          // Lê empresa e nome do decisor do Leads_Master para localizar a linha
+          try {
+            const spreadsheetId = getSpreadsheetId()
+            const sheets = getSheets()
+            const colsRes = await withRetry(() =>
+              sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:I` }),
+            )
+            const rows = (colsRes.data.values ?? []) as string[][]
+            const leadRow = rows.find((r, i) => i > 0 && r[0] === lead_id)
+            if (leadRow) {
+              const nomeEmpresa = leadRow[1] ?? ''   // B
+              const nomeDecisoa = leadRow[8] ?? ''   // I
+              await incrementContactCount(memberTab, nomeEmpresa, nomeDecisoa).catch(() => {})
+            }
+          } catch { /* não bloqueia o fluxo principal */ }
+        }
+      }
+
       return Response.json({ ok: true, novo_status: nextStatus })
     }
 

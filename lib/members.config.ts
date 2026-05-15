@@ -115,6 +115,11 @@ export const MEMBERS_DISTRIBUTION: MemberDistribution[] = [
   { email: 'tiago.santos@ufabcjr.com.br',      nome: 'Tiago',       ativo: true, capacidade_semanal_empresas: 17 },
 ]
 
+/** Retorna o nome da aba do membro pelo email (sem precisar do displayName). */
+export function getTabByEmail(email: string): string | null {
+  return TAB_OVERRIDES[email.toLowerCase().trim()] ?? null
+}
+
 /** Verifica se o email tem acesso de admin ao painel /admin/*. */
 export function isAdminEmail(email: string): boolean {
   return ADMIN_EMAILS.has(email.toLowerCase().trim())
