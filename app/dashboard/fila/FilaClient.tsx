@@ -85,6 +85,11 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
 
     if (action === 'enviar' && extensaoOk) {
       const linkedinUrl = aba === 'conexoes' ? lead.linkedin_decisor : lead.link_conversa_linkedin
+      if (!linkedinUrl) {
+        setAvisoExtensao('Este lead não tem LinkedIn cadastrado — não é possível enviar via extensão. Use "Pular" para avançar ou "Descartar" para remover da fila.')
+        setPendingId(null)
+        return
+      }
       const tipoAcao    = aba === 'conexoes' ? 'enviar_conexao' : 'enviar_mensagem'
       chrome.runtime.sendMessage(extensionId, {
         type: 'LI_SEND_REQUEST',
