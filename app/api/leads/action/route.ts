@@ -124,6 +124,14 @@ export async function POST(req: NextRequest) {
         return Response.json({ error: 'Lead não encontrado' }, { status: 404 })
       }
 
+      // REGRA: leads que responderam nunca recebem followup automático
+      if (currentStatus === 'respondeu') {
+        return Response.json({ error: 'Este lead já respondeu — continue a conversa diretamente no LinkedIn' }, { status: 400 })
+      }
+      if (currentStatus === 'descartado') {
+        return Response.json({ error: 'Lead descartado — não é possível enviar mensagens' }, { status: 400 })
+      }
+
       const nextStatus = NEXT_STATUS[currentStatus]
       if (!nextStatus) {
         return Response.json({ error: `Status ${currentStatus} não tem próximo estado para envio` }, { status: 400 })
