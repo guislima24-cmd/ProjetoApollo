@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ProspectAI — UFABC Júnior",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Captura prospecções feitas no LinkedIn e registra automaticamente na planilha CRM.",
 
   "permissions": [
@@ -48,6 +48,12 @@
     {
       "matches": ["https://www.linkedin.com/messaging/*"],
       "js": ["reply-detector.js"],
+      "run_at": "document_idle",
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["https://www.linkedin.com/mynetwork/*"],
+      "js": ["acceptance-detector.js"],
       "run_at": "document_idle",
       "world": "ISOLATED"
     }
