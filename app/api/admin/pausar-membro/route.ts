@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
   }
 
   function pickNext(): string | null {
-    const eligible = activeMembers.filter(m => loadMap[m.email] < m.capacidade_semanal)
+    const eligible = activeMembers.filter(m => loadMap[m.email] < m.capacidade_semanal_empresas)
     if (!eligible.length) return null
     eligible.sort((a, b) => loadMap[a.email] - loadMap[b.email])
     const picked = eligible[0].email

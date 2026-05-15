@@ -96,23 +96,23 @@ export const ADMIN_EMAILS = new Set([
 ])
 
 export interface MemberDistribution {
-  email:              string
-  nome:               string
-  ativo:              boolean
-  capacidade_semanal: number
+  email:                       string
+  nome:                        string
+  ativo:                       boolean
+  capacidade_semanal_empresas: number
 }
 
 /** 9 membros ativos para distribuição de leads LinkedIn. */
 export const MEMBERS_DISTRIBUTION: MemberDistribution[] = [
-  { email: 'guilherme.lima@ufabcjr.com.br',    nome: 'Gui Lima',    ativo: true, capacidade_semanal: 70 },
-  { email: 'guilherme.midolli@ufabcjr.com.br', nome: 'Gui Midolli', ativo: true, capacidade_semanal: 70 },
-  { email: 'larissa.preto@ufabcjr.com.br',     nome: 'Larissa',     ativo: true, capacidade_semanal: 70 },
-  { email: 'gustavo.sumita@ufabcjr.com.br',    nome: 'Gustavo',     ativo: true, capacidade_semanal: 70 },
-  { email: 'anna.ferreira@ufabcjr.com.br',     nome: 'Anna',        ativo: true, capacidade_semanal: 70 },
-  { email: 'felipe.ikeda@ufabcjr.com.br',      nome: 'Felipe',      ativo: true, capacidade_semanal: 70 },
-  { email: 'leonardo.aguilar@ufabcjr.com.br',  nome: 'Léo',         ativo: true, capacidade_semanal: 70 },
-  { email: 'maria.almeida@ufabcjr.com.br',     nome: 'Duda',        ativo: true, capacidade_semanal: 70 },
-  { email: 'tiago.santos@ufabcjr.com.br',      nome: 'Tiago',       ativo: true, capacidade_semanal: 70 },
+  { email: 'guilherme.lima@ufabcjr.com.br',    nome: 'Gui Lima',    ativo: true, capacidade_semanal_empresas: 17 },
+  { email: 'guilherme.midolli@ufabcjr.com.br', nome: 'Gui Midolli', ativo: true, capacidade_semanal_empresas: 17 },
+  { email: 'larissa.preto@ufabcjr.com.br',     nome: 'Larissa',     ativo: true, capacidade_semanal_empresas: 17 },
+  { email: 'gustavo.sumita@ufabcjr.com.br',    nome: 'Gustavo',     ativo: true, capacidade_semanal_empresas: 17 },
+  { email: 'anna.ferreira@ufabcjr.com.br',     nome: 'Anna',        ativo: true, capacidade_semanal_empresas: 17 },
+  { email: 'felipe.ikeda@ufabcjr.com.br',      nome: 'Felipe',      ativo: true, capacidade_semanal_empresas: 17 },
+  { email: 'leonardo.aguilar@ufabcjr.com.br',  nome: 'Léo',         ativo: true, capacidade_semanal_empresas: 17 },
+  { email: 'maria.almeida@ufabcjr.com.br',     nome: 'Duda',        ativo: true, capacidade_semanal_empresas: 17 },
+  { email: 'tiago.santos@ufabcjr.com.br',      nome: 'Tiago',       ativo: true, capacidade_semanal_empresas: 17 },
 ]
 
 /** Verifica se o email tem acesso de admin ao painel /admin/*. */

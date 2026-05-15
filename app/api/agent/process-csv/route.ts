@@ -4,7 +4,7 @@ import { analyzeCsvLead } from '@/lib/agent/source-ai-analysis-csv'
 import { saveCsvLead } from '@/lib/sheets'
 import { enrichLinkedInLead } from '@/lib/agent/enrich-linkedin-lead'
 import { ensureLeadsMasterTab } from '@/lib/sheets/leads-master'
-import { getMasterSnapshot, isDuplicate, pickMember } from '@/lib/sheets/distribution'
+import { getMasterSnapshot, isDecissorDuplicate, getOrAssignMember } from '@/lib/sheets/distribution'
 import { insertLead } from '@/lib/sheets/leads-master'
 
 export const dynamic = 'force-dynamic'
@@ -124,8 +124,9 @@ export async function POST(req: NextRequest) {
       telefone_decisor: body.telefone           ?? '',
     }
 
-    if (!isDuplicate(apolloRow, snapshot)) {
-      const membro = pickMember(snapshot) ?? ''
+    if (!isDecissorDuplicate(apolloRow.email_decisor, snapshot)) {
+      // Empresa já existente → usa membro anterior; nova empresa → distribui
+      const membro = getOrAssignMember(apolloRow.nome_empresa, snapshot) ?? ''
 
       // Gera mensagens de LinkedIn via IA
       let enrichment = {
@@ -171,6 +172,11 @@ export async function POST(req: NextRequest) {
         data_resposta:            '',
         data_descartado:          '',
       })
+
+      // Dedup intra-lote: registra email para não duplicar dentro do mesmo lote
+      if (apolloRow.email_decisor) {
+        snapshot.existingEmails.add(apolloRow.email_decisor.toLowerCase().trim())
+      }
     }
   } catch (err) {
     // Não quebra o fluxo existente — pipeline LinkedIn é best-effort
