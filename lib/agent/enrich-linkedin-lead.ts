@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 
 export interface LinkedInEnrichment {
   nota_conexao:         string  // max 300
-  mensagem_boas_vindas: string  // max 800
+  mensagem_pitch:       string  // max 800
   followup_1:           string  // max 600
   followup_2:           string  // max 400
   gancho_personalizado: string
@@ -12,7 +12,7 @@ export interface LinkedInEnrichment {
 
 const MAX_LENGTHS: Record<keyof LinkedInEnrichment, number> = {
   nota_conexao:         300,
-  mensagem_boas_vindas: 800,
+  mensagem_pitch:       800,
   followup_1:           600,
   followup_2:           400,
   gancho_personalizado: 300,
@@ -44,9 +44,9 @@ Decisor: ${nome_decisor || 'Não informado'} (${cargo_decisor || 'Não informado
 Gere EXATAMENTE este JSON, sem markdown, sem texto extra:
 {
   "nota_conexao": "máx 300 chars. Tom curioso, sem vender. Mencionar algo específico do setor ou cargo. Não usar parabéns pela conquista.",
-  "mensagem_boas_vindas": "máx 800 chars. Agradece a conexão, se apresenta como pré-vendas da UFABC Júnior, faz pergunta sobre dor específica do setor. Sem pitch de venda direto.",
-  "followup_1": "máx 600 chars. Retoma o assunto da boas-vindas, oferece algo de valor (case, artigo, conversa rápida). Sem pressão.",
-  "followup_2": "máx 400 chars. Último contato, soft close. Algo como se faz sentido depois, fico à disposição.",
+  "mensagem_pitch": "máx 800 chars. Cumprimento direto pelo nome + observação específica sobre a empresa ou setor + apresentação concisa da UFABC Júnior e como podemos ajudar + CTA suave (ex: faz sentido conversarmos?). Direto ao ponto, sem rodeios.",
+  "followup_1": "máx 600 chars. Retoma o pitch inicial, oferece algo de valor concreto (case, resultado, conversa rápida de 15min). Sem pressão.",
+  "followup_2": "máx 400 chars. Último contato, soft close. Algo como: se faz sentido depois, fico à disposição.",
   "gancho_personalizado": "frase de 1 linha sobre por que essa empresa específica é interessante",
   "justificativa_ia": "por que esse lead tem potencial (1 frase)"
 }
@@ -72,7 +72,7 @@ function isValidEnrichment(obj: unknown): obj is LinkedInEnrichment {
   const o = obj as Record<string, unknown>
   return (
     typeof o.nota_conexao         === 'string' &&
-    typeof o.mensagem_boas_vindas === 'string' &&
+    typeof o.mensagem_pitch       === 'string' &&
     typeof o.followup_1           === 'string' &&
     typeof o.followup_2           === 'string' &&
     typeof o.gancho_personalizado === 'string' &&

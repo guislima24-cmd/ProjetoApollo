@@ -39,10 +39,10 @@ async function atualizarMensagemEditada(leadId: string, aba: string, mensagem: s
   if (idx === -1) return
 
   const sheetRow = idx + 1
-  // aba: 'nota_conexao'(V=22), 'mensagem_boas_vindas'(W=23), 'followup_1'(X=24), 'followup_2'(Y=25)
+  // aba: 'nota_conexao'(V=22), 'mensagem_pitch'(W=23), 'followup_1'(X=24), 'followup_2'(Y=25)
   const colMap: Record<string, string> = {
     nota_conexao:         `V${sheetRow}`,
-    mensagem_boas_vindas: `W${sheetRow}`,
+    mensagem_pitch: `W${sheetRow}`,
     followup_1:           `X${sheetRow}`,
     followup_2:           `Y${sheetRow}`,
   }

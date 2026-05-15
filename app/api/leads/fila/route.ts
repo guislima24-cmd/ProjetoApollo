@@ -33,7 +33,7 @@ function rowToLead(row: string[]): LeadMaster {
     data_proxima_acao:        row[19] ?? '',
     tentativas_followup:      parseInt(row[20] ?? '0', 10) || 0,
     nota_conexao:             row[21] ?? '',
-    mensagem_boas_vindas:     row[22] ?? '',
+    mensagem_pitch:     row[22] ?? '',
     followup_1:               row[23] ?? '',
     followup_2:               row[24] ?? '',
     gancho_personalizado:     row[25] ?? '',
@@ -64,8 +64,8 @@ export async function GET(_req: NextRequest) {
   } catch (err) {
     console.error('[fila] Sheets error:', err)
     return Response.json({
-      conexoes: [], boas_vindas: [], followups: [],
-      totais: { conexoes: 0, boas_vindas: 0, followups: 0 },
+      conexoes: [], pitch: [], followups: [],
+      totais: { conexoes: 0, pitch: 0, followups: 0 },
     })
   }
 
@@ -100,11 +100,11 @@ export async function GET(_req: NextRequest) {
 
   return Response.json({
     conexoes:   conexoes.slice(0, PAGE_SIZE),
-    boas_vindas: boasVindas.slice(0, PAGE_SIZE),
+    pitch: boasVindas.slice(0, PAGE_SIZE),
     followups:  followups.slice(0, PAGE_SIZE),
     totais: {
       conexoes:   conexoes.length,
-      boas_vindas: boasVindas.length,
+      pitch: boasVindas.length,
       followups:  followups.length,
     },
   })

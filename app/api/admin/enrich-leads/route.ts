@@ -69,7 +69,7 @@ function rowToLead(row: string[]): LeadMaster {
     data_proxima_acao:        row[19] ?? '',
     tentativas_followup:      parseInt(row[20] ?? '0', 10) || 0,
     nota_conexao:             row[21] ?? '',
-    mensagem_boas_vindas:     row[22] ?? '',
+    mensagem_pitch:     row[22] ?? '',
     followup_1:               row[23] ?? '',
     followup_2:               row[24] ?? '',
     gancho_personalizado:     row[25] ?? '',
@@ -84,7 +84,7 @@ function rowToLead(row: string[]): LeadMaster {
 
 async function saveEnrichment(rowIdx: number, enrichment: {
   nota_conexao:         string
-  mensagem_boas_vindas: string
+  mensagem_pitch: string
   followup_1:           string
   followup_2:           string
   gancho_personalizado: string
@@ -101,7 +101,7 @@ async function saveEnrichment(rowIdx: number, enrichment: {
       valueInputOption: 'RAW',
       requestBody: { values: [[
         enrichment.nota_conexao,
-        enrichment.mensagem_boas_vindas,
+        enrichment.mensagem_pitch,
         enrichment.followup_1,
         enrichment.followup_2,
         enrichment.gancho_personalizado,

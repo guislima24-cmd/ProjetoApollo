@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
 
       // Gera mensagens de LinkedIn via IA
       let enrichment = {
-        nota_conexao: '', mensagem_boas_vindas: '', followup_1: '',
+        nota_conexao: '', mensagem_pitch: '', followup_1: '',
         followup_2: '', gancho_personalizado: analysis?.argumento_abertura ?? '',
         justificativa_ia: analysis?.justificativa ?? '',
       }
@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
         data_proxima_acao:        '',
         tentativas_followup:      0,
         nota_conexao:             enrichment.nota_conexao,
-        mensagem_boas_vindas:     enrichment.mensagem_boas_vindas,
+        mensagem_pitch:     enrichment.mensagem_pitch,
         followup_1:               enrichment.followup_1,
         followup_2:               enrichment.followup_2,
         gancho_personalizado:     enrichment.gancho_personalizado,

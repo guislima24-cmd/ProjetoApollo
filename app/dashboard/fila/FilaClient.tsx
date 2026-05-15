@@ -3,25 +3,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { LeadMaster } from '@/lib/types/lead'
 
-type Aba = 'conexoes' | 'boas_vindas' | 'followups'
+type Aba = 'conexoes' | 'pitch' | 'followups'
 
 interface FilaData {
-  conexoes:    LeadMaster[]
-  boas_vindas:  LeadMaster[]
-  followups:   LeadMaster[]
-  totais:      { conexoes: number; boas_vindas: number; followups: number }
+  conexoes:  LeadMaster[]
+  pitch:     LeadMaster[]
+  followups: LeadMaster[]
+  totais:    { conexoes: number; pitch: number; followups: number }
 }
 
 const CAMPO_POR_ABA: Record<Aba, keyof LeadMaster> = {
-  conexoes:   'nota_conexao',
-  boas_vindas: 'mensagem_boas_vindas',
-  followups:  'followup_1',
+  conexoes: 'nota_conexao',
+  pitch:    'mensagem_pitch',
+  followups: 'followup_1',
 }
 
 const LABEL_ABA: Record<Aba, string> = {
-  conexoes:   'Conexões',
-  boas_vindas: 'Boas-vindas',
-  followups:  'Follow-ups',
+  conexoes:  'Conexões',
+  pitch:     'Pitch',
+  followups: 'Follow-ups',
 }
 
 declare const chrome: any
@@ -144,7 +144,7 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
           {([
             { label: 'Conexões',   valor: fila.totais.conexoes },
-            { label: 'Boas-vindas', valor: fila.totais.boas_vindas },
+            { label: 'Pitch',      valor: fila.totais.pitch },
             { label: 'Follow-ups', valor: fila.totais.followups },
           ] as const).map(({ label, valor }) => (
             <div key={label} className="card" style={{ padding: '14px 16px' }}>
@@ -174,7 +174,7 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
         background: 'var(--bg-card)', border: '1px solid var(--border)',
         borderRadius: 10, padding: 4,
       }}>
-        {(['conexoes', 'boas_vindas', 'followups'] as Aba[]).map(a => (
+        {(['conexoes', 'pitch', 'followups'] as const).map(a => (
           <button
             key={a}
             onClick={() => setAba(a)}
@@ -233,7 +233,7 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
 
 function abaAtual(fila: FilaData | null, aba: Aba): LeadMaster[] {
   if (!fila) return []
-  return fila[aba === 'boas_vindas' ? 'boas_vindas' : aba] ?? []
+  return fila[aba] ?? []
 }
 
 function LeadCard({ lead, aba, mensagemEditada, onMensagemEdit, onAcao, loading, extensaoOk }: {

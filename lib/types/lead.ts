@@ -37,7 +37,7 @@ export interface LeadMaster {
   data_proxima_acao:        string      // T - ISO
   tentativas_followup:      number      // U - 0..2
   nota_conexao:             string      // V - max 300
-  mensagem_boas_vindas:     string      // W - max 800
+  mensagem_pitch:           string      // W - max 800
   followup_1:               string      // X - max 600
   followup_2:               string      // Y - max 400
   gancho_personalizado:     string      // Z

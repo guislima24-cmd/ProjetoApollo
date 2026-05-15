@@ -27,7 +27,7 @@ const HEADERS: string[] = [
   'data_proxima_acao',        // T
   'tentativas_followup',      // U
   'nota_conexao',             // V
-  'mensagem_boas_vindas',     // W
+  'mensagem_pitch',           // W
   'followup_1',               // X
   'followup_2',               // Y
   'gancho_personalizado',     // Z
@@ -96,7 +96,7 @@ function leadToRow(lead: LeadMaster): string[] {
     lead.data_proxima_acao,
     String(lead.tentativas_followup),
     sanitize(lead.nota_conexao),
-    sanitize(lead.mensagem_boas_vindas),
+    sanitize(lead.mensagem_pitch),
     sanitize(lead.followup_1),
     sanitize(lead.followup_2),
     sanitize(lead.gancho_personalizado),
@@ -133,7 +133,7 @@ function rowToLead(row: string[]): LeadMaster {
     data_proxima_acao:        row[19] ?? '',
     tentativas_followup:      parseInt(row[20] ?? '0', 10) || 0,
     nota_conexao:             row[21] ?? '',
-    mensagem_boas_vindas:     row[22] ?? '',
+    mensagem_pitch:           row[22] ?? '',
     followup_1:               row[23] ?? '',
     followup_2:               row[24] ?? '',
     gancho_personalizado:     row[25] ?? '',
