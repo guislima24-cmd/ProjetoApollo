@@ -1817,7 +1817,7 @@ export default function AgentePage() {
                     <><span className="spinner" style={{ display: 'inline-block', width: 11, height: 11, marginRight: 6 }} />Raspando LinkedIn + sites…</>
                   )}
                   {csvState === 'paused' && '⏸ Pausado'}
-                  {csvState === 'done'   && '✓ Concluído'}
+                  {csvState === 'done'   && '✓ Concluído — leads adicionados à fila'}
                   {csvState === 'error'  && '⚠ Finalizado com erros'}
                 </span>
                 <span style={{ fontWeight: 600 }}>{csvProgress.done} / {csvProgress.total}</span>
@@ -1972,6 +1972,27 @@ export default function AgentePage() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {csvState === 'done' && csvLeads.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <a
+                href="/dashboard/fila"
+                style={{
+                  display: 'inline-block',
+                  background: 'var(--green-primary)',
+                  color: 'var(--cream)',
+                  padding: '9px 18px',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontFamily: 'Syne, sans-serif',
+                  fontWeight: 700,
+                  textDecoration: 'none',
+                }}
+              >
+                Ver fila de envio →
+              </a>
             </div>
           )}
 

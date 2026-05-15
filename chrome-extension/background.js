@@ -182,3 +182,4 @@ chrome.runtime.onStartup.addListener(flushQueue)
 import './agent-mode.js'
 import './agent-mode-apollo.js'
 import './agent-mode-csv.js'
+import './agent-mode-linkedin.js'

@@ -503,11 +503,13 @@ export async function appendProspection(
   }
   const targetRow = Math.max(3, lastDataRow + 1)  // nunca antes da linha 3
 
+  // Escreve apenas A:I (colunas 0-8) — pula J em diante para preservar
+  // o dropdown "Quantos contatos?" e os demais campos manuais do membro.
   await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${quoteSheet(memberTab)}!A${targetRow}:T${targetRow}`,
+    range: `${quoteSheet(memberTab)}!A${targetRow}:I${targetRow}`,
     valueInputOption: 'RAW',
-    requestBody: { values: [row] },
+    requestBody: { values: [row.slice(0, 9)] },
   }))
 
   return targetRow
@@ -536,6 +538,55 @@ export async function updateProspectionStatus(
         values: [[status]],
       }],
     },
+  }))
+}
+
+/**
+ * Incrementa coluna J ("Quantos contatos?") da linha da empresa/decisor
+ * na aba individual do membro. Chamado ao enviar pitch e follow-ups.
+ */
+export async function incrementContactCount(
+  memberTab: string,
+  empresa:   string,
+  nome:      string,
+): Promise<void> {
+  const sheets = getSheets()
+  const spreadsheetId = getSpreadsheetId()
+
+  // Lê colunas E (empresa) e F (nome) da aba do membro
+  const res = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoteSheet(memberTab)}!E:F`,
+  }))
+  const rows = (res.data.values ?? []) as string[][]
+
+  const empresaNorm = empresa.toLowerCase().trim()
+  const nomeNorm    = nome.toLowerCase().trim()
+
+  let targetRow = -1
+  for (let i = 0; i < rows.length; i++) {
+    const rowEmpresa = (rows[i]?.[0] ?? '').toLowerCase().trim()
+    const rowNome    = (rows[i]?.[1] ?? '').toLowerCase().trim()
+    if (rowEmpresa === empresaNorm && (!nomeNorm || rowNome === nomeNorm || rowNome === '')) {
+      targetRow = i + 1  // 1-based
+      break
+    }
+  }
+
+  if (targetRow < 0) return  // linha não encontrada — sem ação
+
+  // Lê valor atual de J
+  const jRes = await withRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoteSheet(memberTab)}!J${targetRow}`,
+  }))
+  const currentJ = parseInt(jRes.data.values?.[0]?.[0] ?? '0', 10) || 0
+
+  await withRetry(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range:            `${quoteSheet(memberTab)}!J${targetRow}`,
+    valueInputOption: 'RAW',
+    requestBody:      { values: [[currentJ + 1]] },
   }))
 }
 

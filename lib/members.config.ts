@@ -83,3 +83,45 @@ export function getAllMemberTabs(): string[] {
 export function getMemberTab(_email: string): string | null {
   return null
 }
+
+// ── Distribuição LinkedIn ─────────────────────────────────────────────────────
+
+/** Emails com acesso ao painel admin (gerente + líderes de vendas). */
+export const ADMIN_EMAILS = new Set([
+  'guilherme.lima@ufabcjr.com.br',
+  'guislima24@gmail.com',
+  'tiago.santos@ufabcjr.com.br',
+  'felipe.ikeda@ufabcjr.com.br',
+  'anna.ferreira@ufabcjr.com.br',
+])
+
+export interface MemberDistribution {
+  email:                       string
+  nome:                        string
+  ativo:                       boolean
+  capacidade_semanal_empresas: number
+}
+
+/** Membros ativos para distribuição de leads LinkedIn. */
+// TESTE: apenas Gui Lima ativo — reativar todos antes de ir para produção real
+export const MEMBERS_DISTRIBUTION: MemberDistribution[] = [
+  { email: 'guilherme.lima@ufabcjr.com.br',    nome: 'Gui Lima',    ativo: true,  capacidade_semanal_empresas: 17 },
+  { email: 'guilherme.midolli@ufabcjr.com.br', nome: 'Gui Midolli', ativo: false, capacidade_semanal_empresas: 17 },
+  { email: 'larissa.preto@ufabcjr.com.br',     nome: 'Larissa',     ativo: false, capacidade_semanal_empresas: 17 },
+  { email: 'gustavo.sumita@ufabcjr.com.br',    nome: 'Gustavo',     ativo: false, capacidade_semanal_empresas: 17 },
+  { email: 'anna.ferreira@ufabcjr.com.br',     nome: 'Anna',        ativo: false, capacidade_semanal_empresas: 17 },
+  { email: 'felipe.ikeda@ufabcjr.com.br',      nome: 'Felipe',      ativo: false, capacidade_semanal_empresas: 17 },
+  { email: 'leonardo.aguilar@ufabcjr.com.br',  nome: 'Léo',         ativo: false, capacidade_semanal_empresas: 17 },
+  { email: 'maria.almeida@ufabcjr.com.br',     nome: 'Duda',        ativo: false, capacidade_semanal_empresas: 17 },
+  { email: 'tiago.santos@ufabcjr.com.br',      nome: 'Tiago',       ativo: false, capacidade_semanal_empresas: 17 },
+]
+
+/** Retorna o nome da aba do membro pelo email (sem precisar do displayName). */
+export function getTabByEmail(email: string): string | null {
+  return TAB_OVERRIDES[email.toLowerCase().trim()] ?? null
+}
+
+/** Verifica se o email tem acesso de admin ao painel /admin/*. */
+export function isAdminEmail(email: string): boolean {
+  return ADMIN_EMAILS.has(email.toLowerCase().trim())
+}
