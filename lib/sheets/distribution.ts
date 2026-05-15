@@ -24,9 +24,10 @@ const DEDUP_DAYS        = 90
 // ── Snapshot da Leads_Master ──────────────────────────────────────────────────
 
 interface MasterSnapshot {
-  existingEmails: Set<string>          // emails de decisores já cadastrados (90 dias)
-  empresaMembro:  Map<string, string>  // empresa → email do membro responsável (todos os tempos)
-  activeCounts:   Map<string, number>  // membro → nº de empresas ativas distintas
+  existingEmails:    Set<string>          // emails de decisores já cadastrados (90 dias)
+  existingLinkedins: Set<string>          // LinkedIn URLs de decisores já cadastrados (90 dias)
+  empresaMembro:     Map<string, string>  // empresa → email do membro responsável (todos os tempos)
+  activeCounts:      Map<string, number>  // membro → nº de empresas ativas distintas
 }
 
 export async function getMasterSnapshot(): Promise<MasterSnapshot> {
@@ -36,7 +37,7 @@ export async function getMasterSnapshot(): Promise<MasterSnapshot> {
   const res = await withRetry(() =>
     sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${TAB}'!B:R`,  // B=nome_empresa, L=email_decisor, O=data_importacao, P=membro, R=status
+      range: `'${TAB}'!B:R`,  // B=nome_empresa, K=linkedin_decisor, L=email_decisor, O=data_importacao, P=membro, R=status
     }),
   )
 
@@ -44,6 +45,7 @@ export async function getMasterSnapshot(): Promise<MasterSnapshot> {
   const cutoff = Date.now() - DEDUP_DAYS * 86_400_000
 
   const existingEmails    = new Set<string>()
+  const existingLinkedins = new Set<string>()
   const empresaMembro     = new Map<string, string>()
   const activeCounts      = new Map<string, number>()
   const empresasPorMembro = new Map<string, Set<string>>()
@@ -54,16 +56,20 @@ export async function getMasterSnapshot(): Promise<MasterSnapshot> {
   }
 
   for (const row of rows.slice(1)) {
-    const nomeEmpresa   = (row[0]  ?? '').toLowerCase().trim()  // B
-    const emailDecisora = (row[10] ?? '').toLowerCase().trim()  // L
-    const dataImport    = row[13]  ?? ''                        // O
-    const membro        = (row[14] ?? '').toLowerCase().trim()  // P
-    const status        = (row[16] ?? '') as LeadStatus         // R
+    const nomeEmpresa      = (row[0]  ?? '').toLowerCase().trim()  // B
+    const linkedinDecisora = (row[9]  ?? '').toLowerCase().trim()  // K
+    const emailDecisora    = (row[10] ?? '').toLowerCase().trim()  // L
+    const dataImport       = row[13]  ?? ''                        // O
+    const membro           = (row[14] ?? '').toLowerCase().trim()  // P
+    const status           = (row[16] ?? '') as LeadStatus         // R
 
-    // Email dedup: registra decisores importados nos últimos 90 dias
-    if (emailDecisora && dataImport) {
+    // Dedup: registra decisores importados nos últimos 90 dias (email + LinkedIn URL)
+    if (dataImport) {
       const ts = new Date(dataImport).getTime()
-      if (!isNaN(ts) && ts > cutoff) existingEmails.add(emailDecisora)
+      if (!isNaN(ts) && ts > cutoff) {
+        if (emailDecisora)    existingEmails.add(emailDecisora)
+        if (linkedinDecisora) existingLinkedins.add(linkedinDecisora)
+      }
     }
 
     // Empresa → membro: sem cutoff, para reutilizar o mesmo membro em novos decisores da empresa
@@ -81,14 +87,17 @@ export async function getMasterSnapshot(): Promise<MasterSnapshot> {
     activeCounts.set(membro, empresas.size)
   }
 
-  return { existingEmails, empresaMembro, activeCounts }
+  return { existingEmails, existingLinkedins, empresaMembro, activeCounts }
 }
 
 // ── Deduplicação por decisor ──────────────────────────────────────────────────
 
-export function isDecissorDuplicate(email: string, snapshot: MasterSnapshot): boolean {
+export function isDecissorDuplicate(email: string, linkedin: string, snapshot: MasterSnapshot): boolean {
   const e = email.toLowerCase().trim()
-  return e ? snapshot.existingEmails.has(e) : false
+  const l = linkedin.toLowerCase().trim()
+  if (e && snapshot.existingEmails.has(e))    return true
+  if (l && snapshot.existingLinkedins.has(l)) return true
+  return false
 }
 
 // ── Algoritmo de distribuição por empresa ────────────────────────────────────

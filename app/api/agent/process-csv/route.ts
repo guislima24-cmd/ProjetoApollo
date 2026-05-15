@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
       telefone_decisor: body.telefone           ?? '',
     }
 
-    if (!isDecissorDuplicate(apolloRow.email_decisor, snapshot)) {
+    if (!isDecissorDuplicate(apolloRow.email_decisor, apolloRow.linkedin_decisor, snapshot)) {
       // Empresa já existente → usa membro anterior; nova empresa → distribui
       const membro = getOrAssignMember(apolloRow.nome_empresa, snapshot) ?? ''
 
@@ -173,10 +173,9 @@ export async function POST(req: NextRequest) {
         data_descartado:          '',
       })
 
-      // Dedup intra-lote: registra email para não duplicar dentro do mesmo lote
-      if (apolloRow.email_decisor) {
-        snapshot.existingEmails.add(apolloRow.email_decisor.toLowerCase().trim())
-      }
+      // Dedup intra-lote: registra email + LinkedIn para não duplicar dentro do mesmo lote
+      if (apolloRow.email_decisor)    snapshot.existingEmails.add(apolloRow.email_decisor.toLowerCase().trim())
+      if (apolloRow.linkedin_decisor) snapshot.existingLinkedins.add(apolloRow.linkedin_decisor.toLowerCase().trim())
     }
   } catch (err) {
     // Não quebra o fluxo existente — pipeline LinkedIn é best-effort
