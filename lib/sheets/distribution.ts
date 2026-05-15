@@ -1,7 +1,21 @@
 import { getSheets, getSpreadsheetId, withRetry } from './client'
 import { MEMBERS_DISTRIBUTION } from '@/lib/members.config'
-import type { ApolloRow } from '@/lib/csv-parser'
-import type { LeadMaster, LeadStatus } from '@/lib/types/lead'
+import type { LeadStatus } from '@/lib/types/lead'
+
+export interface ApolloRow {
+  nome_empresa:     string
+  setor:            string
+  porte:            string
+  cidade:           string
+  estado:           string
+  site:             string
+  linkedin_empresa: string
+  nome_decisor:     string
+  cargo_decisor:    string
+  linkedin_decisor: string
+  email_decisor:    string
+  telefone_decisor: string
+}
 
 const TAB                = 'Leads_Master'
 const INACTIVE_STATUSES  = new Set<LeadStatus>(['respondeu', 'descartado'])
@@ -98,99 +112,3 @@ export function pickMember(snapshot: MasterSnapshot): string | null {
   return chosen
 }
 
-// ── Insere lote de leads com distribuição ─────────────────────────────────────
-
-export interface ImportSummary {
-  total:       number
-  atribuidos:  number
-  duplicados:  number
-  sem_vaga:    number
-  por_membro:  Record<string, number>
-}
-
-export async function distributeLeads(
-  rows:     ApolloRow[],
-  snapshot: MasterSnapshot,
-): Promise<ImportSummary> {
-  const { insertLead } = await import('./leads-master')
-
-  const summary: ImportSummary = {
-    total:      rows.length,
-    atribuidos: 0,
-    duplicados: 0,
-    sem_vaga:   0,
-    por_membro: {},
-  }
-
-  const now = new Date().toISOString()
-
-  for (const row of rows) {
-    if (isDuplicate(row, snapshot)) {
-      summary.duplicados++
-      continue
-    }
-
-    const membro = pickMember(snapshot)
-    if (!membro) {
-      // Insere como nao_atribuido
-      await insertLead({
-        ...apolloRowToLead(row, '', now),
-        status:            'nao_atribuido',
-        membro_responsavel: '',
-        data_atribuicao:   '',
-      })
-      summary.sem_vaga++
-      continue
-    }
-
-    await insertLead(apolloRowToLead(row, membro, now))
-    summary.atribuidos++
-    summary.por_membro[membro] = (summary.por_membro[membro] ?? 0) + 1
-
-    // Atualiza existingKeys para dedup intra-lote
-    if (row.nome_empresa)  snapshot.existingKeys.add(`empresa:${row.nome_empresa.toLowerCase().trim()}`)
-    if (row.email_decisor) snapshot.existingKeys.add(`email:${row.email_decisor.toLowerCase().trim()}`)
-  }
-
-  return summary
-}
-
-function apolloRowToLead(
-  row:    ApolloRow,
-  membro: string,
-  now:    string,
-): Omit<LeadMaster, 'id_lead'> {
-  return {
-    nome_empresa:             row.nome_empresa,
-    setor:                    row.setor,
-    porte:                    row.porte,
-    cidade:                   row.cidade,
-    estado:                   row.estado,
-    site:                     row.site,
-    linkedin_empresa:         row.linkedin_empresa,
-    nome_decisor:             row.nome_decisor,
-    cargo_decisor:            row.cargo_decisor,
-    linkedin_decisor:         row.linkedin_decisor,
-    email_decisor:            row.email_decisor,
-    telefone_decisor:         row.telefone_decisor,
-    fonte:                    'apollo_csv',
-    data_importacao:          now,
-    membro_responsavel:       membro,
-    data_atribuicao:          membro ? now : '',
-    status:                   'nao_contatado',
-    data_ultima_acao:         '',
-    data_proxima_acao:        '',
-    tentativas_followup:      0,
-    nota_conexao:             '',
-    mensagem_boas_vindas:     '',
-    followup_1:               '',
-    followup_2:               '',
-    gancho_personalizado:     '',
-    justificativa_ia:         '',
-    observacoes:              '',
-    link_conversa_linkedin:   '',
-    ultima_mensagem_recebida: '',
-    data_resposta:            '',
-    data_descartado:          '',
-  }
-}
