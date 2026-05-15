@@ -34,6 +34,7 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
   const [extensaoOk, setExtensaoOk] = useState(false)
   const [mensagensEditadas, setMensagensEditadas] = useState<Record<string, string>>({})
   const [pendingId, setPendingId] = useState<string | null>(null)
+  const [avisoExtensao, setAvisoExtensao] = useState<string | null>(null)
 
   const extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID ?? ''
 
@@ -93,9 +94,19 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
         linkedin_url: linkedinUrl,
       }, async (resp: any) => {
         if (resp?.ok) {
+          setAvisoExtensao(null)
           await confirmarEnvio(lead, action, mensagem, campo)
         } else {
-          alert(resp?.error ?? 'Erro na extensão.')
+          const errMsg = resp?.error ?? 'Erro na extensão.'
+          if (errMsg.includes('LIMITE_SEMANAL')) {
+            setAvisoExtensao('⚠ Limite semanal de convites do LinkedIn atingido. Envios de conexão pausados até segunda-feira.')
+          } else if (errMsg.includes('CAPTCHA')) {
+            setAvisoExtensao('⚠ CAPTCHA detectado no LinkedIn. Abra o LinkedIn manualmente, resolva o desafio e tente novamente.')
+          } else if (errMsg.includes('TIMEOUT')) {
+            setAvisoExtensao(`Timeout: ${errMsg}`)
+          } else {
+            setAvisoExtensao(errMsg)
+          }
           setPendingId(null)
         }
       })
@@ -157,7 +168,7 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
 
       {/* Status extensão */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 6, marginBottom: 20,
+        display: 'flex', alignItems: 'center', gap: 6, marginBottom: avisoExtensao ? 8 : 20,
         fontSize: 12, color: extensaoOk ? 'var(--green)' : 'var(--gold)',
       }}>
         <span style={{
@@ -167,6 +178,21 @@ export default function FilaClient({ nomeUsuario, email }: { nomeUsuario: string
         }} />
         {extensaoOk ? 'Extensão conectada — envio automático ativo' : 'Extensão offline — use "Marcar enviado" manualmente'}
       </div>
+
+      {/* Aviso de erro da extensão */}
+      {avisoExtensao && (
+        <div style={{
+          marginBottom: 20, padding: '10px 14px', borderRadius: 8, fontSize: 12,
+          background: 'rgba(220,80,80,0.1)', border: '1px solid var(--red)',
+          color: 'var(--red)', display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}>
+          <span style={{ flex: 1 }}>{avisoExtensao}</span>
+          <button
+            onClick={() => setAvisoExtensao(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: 14, lineHeight: 1 }}
+          >✕</button>
+        </div>
+      )}
 
       {/* Abas */}
       <div style={{

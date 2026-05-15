@@ -1,9 +1,10 @@
 // agent-mode-linkedin.js — Envio semi-automático de conexões e mensagens no LinkedIn
-// Prefixo "li_" em todas as chaves de storage.
 
-const LI_VERSION = 1
+const LI_VERSION = 2
 
-async function liOpenTab(url, delayMs = 3000) {
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+async function liOpenTab(url, delayMs = 3500) {
   const tab = await chrome.tabs.create({ url, active: true })
   await new Promise(r => setTimeout(r, delayMs))
   return tab.id
@@ -13,7 +14,7 @@ async function liCloseTab(tabId) {
   try { await chrome.tabs.remove(tabId) } catch {}
 }
 
-async function liWaitForTab(tabId, timeoutMs = 20000) {
+async function liWaitForTab(tabId, timeoutMs = 25000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
@@ -30,88 +31,139 @@ async function liWaitForTab(tabId, timeoutMs = 20000) {
 async function enviarConexao(tabId, nota) {
   const result = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (notaTexto) => {
-      // Tenta clicar no botão "Conectar" do perfil
-      const connectBtn = Array.from(document.querySelectorAll('button')).find(
-        b => b.innerText?.trim().toLowerCase() === 'connect' ||
-             b.innerText?.trim().toLowerCase() === 'conectar'
-      )
-      if (!connectBtn) return { ok: false, error: 'Botão Conectar não encontrado' }
+    func: async (notaTexto) => {
+      function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+      function findBtn(keywords) {
+        return Array.from(document.querySelectorAll('button')).find(b => {
+          const text = (b.innerText ?? b.textContent ?? '').trim().toLowerCase()
+          return keywords.some(k => text === k || text.startsWith(k))
+        })
+      }
+
+      // Captcha
+      if (document.querySelector('#captcha-challenge, [data-test-id="challenge-form"], .core-rail__security-verification')) {
+        return { ok: false, error: 'CAPTCHA detectado — resolva manualmente no LinkedIn' }
+      }
+
+      // Limite semanal (pode estar na página antes mesmo de clicar)
+      const pageText = (document.body?.innerText ?? '').toLowerCase()
+      if (
+        pageText.includes('weekly invitation limit') ||
+        pageText.includes('limite semanal de convites') ||
+        pageText.includes('reached the limit') ||
+        pageText.includes('atingiu o limite')
+      ) {
+        return { ok: false, error: 'LIMITE_SEMANAL: Limite semanal de convites do LinkedIn atingido' }
+      }
+
+      // Já conectado?
+      if (findBtn(['message', 'mensagem', 'message this person'])) {
+        return { ok: false, error: 'Já conectado com este perfil' }
+      }
+
+      // Convite pendente?
+      if (findBtn(['pending', 'pendente', 'withdraw'])) {
+        return { ok: false, error: 'Convite já enviado e aguardando resposta' }
+      }
+
+      // Botão Conectar
+      const connectBtn = findBtn(['connect', 'conectar'])
+      if (!connectBtn) return { ok: false, error: 'Botão Conectar não encontrado — verifique o perfil' }
+
       connectBtn.click()
+      await sleep(1500)
 
-      return new Promise(resolve => {
-        setTimeout(() => {
-          // Clica "Adicionar nota"
-          const addNoteBtn = Array.from(document.querySelectorAll('button')).find(
-            b => b.innerText?.toLowerCase().includes('add a note') ||
-                 b.innerText?.toLowerCase().includes('adicionar nota')
-          )
-          if (!addNoteBtn) {
-            // Sem nota — clica Enviar direto
-            const sendBtn = Array.from(document.querySelectorAll('button')).find(
-              b => b.innerText?.toLowerCase() === 'send' ||
-                   b.innerText?.toLowerCase() === 'enviar'
-            )
-            if (sendBtn) { sendBtn.click(); resolve({ ok: true, semNota: true }) }
-            else resolve({ ok: false, error: 'Modal de conexão não encontrado' })
-            return
-          }
+      // Verifica se modal de limite apareceu após clicar
+      const anyDialog = document.querySelector('[role="dialog"]')
+      if (anyDialog) {
+        const dialogText = (anyDialog.innerText ?? '').toLowerCase()
+        if (dialogText.includes('limit') || dialogText.includes('limite')) {
+          return { ok: false, error: 'LIMITE_SEMANAL: Limite semanal de convites do LinkedIn atingido' }
+        }
+      }
 
-          addNoteBtn.click()
-          setTimeout(() => {
-            const textarea = document.querySelector('textarea[name="message"]')
-              ?? document.querySelector('.send-invite__custom-message')
-            if (!textarea) { resolve({ ok: false, error: 'Campo de nota não encontrado' }); return }
+      // "Adicionar nota"
+      const addNoteBtn = findBtn(['add a note', 'adicionar nota'])
+      if (!addNoteBtn) {
+        // Sem opção de nota — tenta enviar direto
+        const sendDirect = findBtn(['send', 'enviar', 'send without a note', 'enviar sem nota'])
+        if (sendDirect) { sendDirect.click(); return { ok: true, semNota: true } }
+        return { ok: false, error: 'Modal de conexão não apareceu — verifique o LinkedIn' }
+      }
 
-            textarea.value = notaTexto
-            textarea.dispatchEvent(new Event('input', { bubbles: true }))
-            textarea.dispatchEvent(new Event('change', { bubbles: true }))
+      addNoteBtn.click()
+      await sleep(1000)
 
-            setTimeout(() => {
-              const sendBtn = Array.from(document.querySelectorAll('button')).find(
-                b => b.innerText?.toLowerCase() === 'send' ||
-                     b.innerText?.toLowerCase() === 'enviar'
-              )
-              if (sendBtn) { sendBtn.click(); resolve({ ok: true }) }
-              else resolve({ ok: false, error: 'Botão Enviar não encontrado no modal' })
-            }, 800)
-          }, 800)
-        }, 1200)
-      })
+      // Preenche a nota
+      const textarea = document.querySelector('textarea[name="message"]')
+        ?? document.querySelector('.send-invite__custom-message')
+        ?? document.querySelector('textarea[id*="custom-message"]')
+        ?? document.querySelector('textarea')
+      if (!textarea) return { ok: false, error: 'Campo de nota não encontrado' }
+
+      // Trigger correto para React: usa native setter
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      if (nativeSetter) nativeSetter.call(textarea, notaTexto)
+      else textarea.value = notaTexto
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea.dispatchEvent(new Event('change', { bubbles: true }))
+      await sleep(700)
+
+      const sendBtn = findBtn(['send', 'enviar'])
+      if (!sendBtn) return { ok: false, error: 'Botão Enviar não encontrado no modal' }
+      sendBtn.click()
+      return { ok: true }
     },
     args: [nota],
   })
   return result?.[0]?.result ?? { ok: false, error: 'Erro no scripting' }
 }
 
-// ── Envio de mensagem (boas-vindas / followup) ────────────────────────────────
+// ── Envio de mensagem (pitch / followup) ──────────────────────────────────────
 
 async function enviarMensagem(tabId, mensagem) {
   const result = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (texto) => {
-      const msgBox = document.querySelector('.msg-form__contenteditable')
-        ?? document.querySelector('[data-placeholder]')
+    func: async (texto) => {
+      function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+      // Captcha
+      if (document.querySelector('#captcha-challenge, [data-test-id="challenge-form"]')) {
+        return { ok: false, error: 'CAPTCHA detectado — resolva manualmente no LinkedIn' }
+      }
+
+      // Campo de mensagem (contenteditable do LinkedIn)
+      const msgBox = document.querySelector('.msg-form__contenteditable[contenteditable="true"]')
+        ?? document.querySelector('[data-placeholder][contenteditable="true"]')
         ?? document.querySelector('[contenteditable="true"]')
 
-      if (!msgBox) return { ok: false, error: 'Campo de mensagem não encontrado' }
+      if (!msgBox) return { ok: false, error: 'Campo de mensagem não encontrado — abra a conversa primeiro' }
 
       msgBox.focus()
-      msgBox.innerText = texto
-      msgBox.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      await sleep(300)
 
-      return new Promise(resolve => {
-        setTimeout(() => {
-          const sendBtn = document.querySelector('.msg-form__send-button')
-            ?? Array.from(document.querySelectorAll('button')).find(
-              b => b.getAttribute('type') === 'submit' ||
-                   b.innerText?.toLowerCase().includes('send') ||
-                   b.innerText?.toLowerCase().includes('enviar')
-            )
-          if (sendBtn) { sendBtn.click(); resolve({ ok: true }) }
-          else resolve({ ok: false, error: 'Botão de envio não encontrado' })
-        }, 600)
-      })
+      // execCommand funciona com contenteditable React do LinkedIn
+      document.execCommand('selectAll', false, null)
+      document.execCommand('delete', false, null)
+      document.execCommand('insertText', false, texto)
+      msgBox.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      await sleep(900)
+
+      // Botão enviar
+      const sendBtn = document.querySelector('.msg-form__send-button[type="submit"]')
+        ?? document.querySelector('button.msg-form__send-button')
+        ?? Array.from(document.querySelectorAll('button[type="submit"]')).find(b =>
+            (b.getAttribute('aria-label') ?? '').toLowerCase().includes('send') ||
+            (b.innerText ?? '').trim().toLowerCase() === 'send' ||
+            (b.innerText ?? '').trim().toLowerCase() === 'enviar'
+          )
+
+      if (!sendBtn) return { ok: false, error: 'Botão de envio não encontrado' }
+      if (sendBtn.disabled) return { ok: false, error: 'Botão desabilitado — texto pode não ter sido inserido' }
+
+      sendBtn.click()
+      return { ok: true }
     },
     args: [mensagem],
   })
@@ -138,9 +190,9 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
       let tabId = null
       try {
         tabId = await liOpenTab(linkedin_url, 3500)
-        const ready = await liWaitForTab(tabId)
+        const ready = await liWaitForTab(tabId, 25000)
         if (!ready) {
-          sendResponse({ ok: false, error: 'Timeout ao carregar página do LinkedIn' })
+          sendResponse({ ok: false, error: 'TIMEOUT: Página do LinkedIn demorou demais para carregar' })
           return
         }
 
@@ -154,8 +206,7 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
           return
         }
 
-        // Aguarda 1s para o LinkedIn processar antes de fechar
-        await new Promise(r => setTimeout(r, 1000))
+        await new Promise(r => setTimeout(r, 1500))
         await liCloseTab(tabId)
         tabId = null
 
@@ -166,7 +217,7 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
         sendResponse({ ok: false, error: String(err?.message ?? err) })
       }
     })()
-    return true  // async response
+    return true
   }
 
   return false
