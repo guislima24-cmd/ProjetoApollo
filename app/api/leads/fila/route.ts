@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
 import { getSheets, getSpreadsheetId, withRetry } from '@/lib/sheets/client'
+import { getCanonicalMemberEmail } from '@/lib/members.config'
 import type { LeadMaster } from '@/lib/types/lead'
 
 export const dynamic = 'force-dynamic'
@@ -70,7 +71,8 @@ export async function GET(_req: NextRequest) {
   }
 
   const rows    = (res.data.values ?? []) as string[][]
-  const emailLow = email.toLowerCase().trim()
+  // Resolve email canônico: guislima24@gmail.com → guilherme.lima@ufabcjr.com.br
+  const emailLow = getCanonicalMemberEmail(email)
   const today    = new Date()
   today.setHours(0, 0, 0, 0)
 

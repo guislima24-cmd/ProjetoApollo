@@ -121,6 +121,19 @@ export function getTabByEmail(email: string): string | null {
   return TAB_OVERRIDES[email.toLowerCase().trim()] ?? null
 }
 
+/**
+ * Resolve o email canônico do membro em MEMBERS_DISTRIBUTION.
+ * Necessário porque um membro pode ter emails alternativos (ex: Gmail pessoal + @ufabcjr).
+ * Exemplo: guislima24@gmail.com → "Gui Lima" → guilherme.lima@ufabcjr.com.br
+ */
+export function getCanonicalMemberEmail(sessionEmail: string): string {
+  const e       = sessionEmail.toLowerCase().trim()
+  const tabName = TAB_OVERRIDES[e]
+  if (!tabName) return e
+  const member = MEMBERS_DISTRIBUTION.find(m => m.nome.toLowerCase() === tabName.toLowerCase())
+  return member?.email ?? e
+}
+
 /** Verifica se o email tem acesso de admin ao painel /admin/*. */
 export function isAdminEmail(email: string): boolean {
   return ADMIN_EMAILS.has(email.toLowerCase().trim())
