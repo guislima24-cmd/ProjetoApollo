@@ -21,6 +21,13 @@ const TAB               = 'Leads_Master'
 const INACTIVE_STATUSES = new Set<LeadStatus>(['respondeu', 'descartado'])
 const DEDUP_DAYS        = 90
 
+// Só bloqueia reimport se uma ação já foi tomada com o decisor.
+// 'enriquecido' = importado mas não contatado → pode reimportar sem problema.
+const DEDUP_BLOCK_STATUSES = new Set<LeadStatus>([
+  'conexao_enviada', 'conexao_aceita',
+  'mensagem_enviada', 'followup_1_enviado', 'followup_2_enviado', 'respondeu',
+])
+
 // ── Snapshot da Leads_Master ──────────────────────────────────────────────────
 
 interface MasterSnapshot {
@@ -63,8 +70,9 @@ export async function getMasterSnapshot(): Promise<MasterSnapshot> {
     const membro           = (row[14] ?? '').toLowerCase().trim()  // P
     const status           = (row[16] ?? '') as LeadStatus         // R
 
-    // Dedup: registra decisores importados nos últimos 90 dias (email + LinkedIn URL)
-    if (dataImport) {
+    // Dedup: só bloqueia reimport se uma ação já foi tomada com o decisor.
+    // 'enriquecido' = importado mas nunca contatado → não bloqueia.
+    if (dataImport && DEDUP_BLOCK_STATUSES.has(status)) {
       const ts = new Date(dataImport).getTime()
       if (!isNaN(ts) && ts > cutoff) {
         if (emailDecisora)    existingEmails.add(emailDecisora)
@@ -109,18 +117,16 @@ export function getOrAssignMember(nomeEmpresa: string, snapshot: MasterSnapshot)
   const existing = snapshot.empresaMembro.get(empresa)
   if (existing) return existing
 
-  // Nova empresa → distribui para membro com menor nº de empresas ativas
-  const ativos      = MEMBERS_DISTRIBUTION.filter(m => m.ativo)
-  const disponiveis = ativos.filter(
-    m => (snapshot.activeCounts.get(m.email) ?? 0) < m.capacidade_semanal_empresas,
-  )
-  if (!disponiveis.length) return null
+  // Nova empresa → distribui para o membro ativo com menor carga.
+  // Sem limite de capacidade — sempre atribui a alguém.
+  const ativos = MEMBERS_DISTRIBUTION.filter(m => m.ativo)
+  if (!ativos.length) return null
 
-  disponiveis.sort(
+  ativos.sort(
     (a, b) => (snapshot.activeCounts.get(a.email) ?? 0) - (snapshot.activeCounts.get(b.email) ?? 0),
   )
 
-  const chosen = disponiveis[0].email
+  const chosen = ativos[0].email
   snapshot.activeCounts.set(chosen, (snapshot.activeCounts.get(chosen) ?? 0) + 1)
   snapshot.empresaMembro.set(empresa, chosen)
   return chosen

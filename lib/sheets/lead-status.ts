@@ -9,7 +9,7 @@ const TAB = 'Leads_Master'
 const VALID_TRANSITIONS: Record<LeadStatus, LeadStatus[]> = {
   nao_atribuido:      ['nao_contatado'],
   nao_contatado:      ['enriquecido', 'descartado'],
-  enriquecido:        ['conexao_enviada'],
+  enriquecido:        ['conexao_enviada', 'descartado'],
   conexao_enviada:    ['conexao_aceita', 'descartado'],
   conexao_aceita:     ['mensagem_enviada'],
   mensagem_enviada:   ['followup_1_enviado', 'respondeu'],

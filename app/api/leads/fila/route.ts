@@ -77,7 +77,6 @@ export async function GET(_req: NextRequest) {
   today.setHours(0, 0, 0, 0)
 
   const conexoes:  LeadMaster[] = []
-  const boasVindas: LeadMaster[] = []
   const followups:  LeadMaster[] = []
 
   for (const row of rows.slice(1)) {
@@ -90,8 +89,6 @@ export async function GET(_req: NextRequest) {
 
     if (status === 'enriquecido') {
       conexoes.push(lead)
-    } else if (status === 'conexao_aceita') {
-      boasVindas.push(lead)
     } else if (status === 'mensagem_enviada' || status === 'followup_1_enviado') {
       if (!lead.data_proxima_acao) continue
       const proxima = new Date(lead.data_proxima_acao)
@@ -101,13 +98,11 @@ export async function GET(_req: NextRequest) {
   }
 
   return Response.json({
-    conexoes:   conexoes.slice(0, PAGE_SIZE),
-    pitch: boasVindas.slice(0, PAGE_SIZE),
-    followups:  followups.slice(0, PAGE_SIZE),
+    conexoes:  conexoes.slice(0, PAGE_SIZE),
+    followups: followups.slice(0, PAGE_SIZE),
     totais: {
-      conexoes:   conexoes.length,
-      pitch: boasVindas.length,
-      followups:  followups.length,
+      conexoes:  conexoes.length,
+      followups: followups.length,
     },
   })
 }

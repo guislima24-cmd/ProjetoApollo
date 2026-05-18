@@ -11,20 +11,6 @@ export const dynamic = 'force-dynamic'
 
 interface Employee { name: string; role: string; profile_url: string | null }
 
-const DECISOR_PRIORITY = [
-  'ceo', 'president', 'founder', 'owner', 'diretor', 'director',
-  'cto', 'coo', 'cfo', 'head', 'gerente geral', 'sócio', 'partner', 'gerente',
-]
-
-function pickDecisionMaker(employees: Employee[]): Employee | null {
-  if (!employees.length) return null
-  for (const keyword of DECISOR_PRIORITY) {
-    const match = employees.find(e => e.role.toLowerCase().includes(keyword))
-    if (match) return match
-  }
-  return employees[0]
-}
-
 function splitCidadeEstado(cidade: string | null): { cidade: string; estado: string } {
   if (!cidade) return { cidade: '', estado: '' }
   const parts = cidade.split(',').map(s => s.trim())
@@ -102,49 +88,60 @@ export async function POST(req: NextRequest) {
     console.error('[process-csv] Sheets (legacy) error:', err)
   }
 
-  // ── Salva no pipeline LinkedIn (Leads_Master) ──────────────────────────────
+  // ── Salva no pipeline LinkedIn (Leads_Master) — 1 lead por decisor ──────────
+  let leads_inseridos = 0
+  let leads_duplicados = 0
+  let master_error: string | null = null
+
   try {
     await ensureLeadsMasterTab()
     const snapshot  = await getMasterSnapshot()
     const { cidade, estado } = splitCidadeEstado(body.cidade ?? null)
-    const decisor   = pickDecisionMaker(linkedin_employees)
 
-    const apolloRow = {
-      nome_empresa:     body.nome,
-      setor:            body.setor            ?? '',
-      porte:            body.funcionarios      ?? '',
-      cidade,
-      estado,
-      site:             body.website           ?? '',
-      linkedin_empresa: body.linkedin_url       ?? '',
-      nome_decisor:     decisor?.name           ?? '',
-      cargo_decisor:    decisor?.role           ?? '',
-      linkedin_decisor: decisor?.profile_url    ?? '',
-      email_decisor:    body.email              ?? '',
-      telefone_decisor: body.telefone           ?? '',
-    }
+    const hasEmployees = linkedin_employees.length > 0
+    const decisores: Array<Employee | null> = hasEmployees ? linkedin_employees : [null]
 
-    if (!isDecissorDuplicate(apolloRow.email_decisor, apolloRow.linkedin_decisor, snapshot)) {
-      // Empresa já existente → usa membro anterior; nova empresa → distribui
-      const membro = getOrAssignMember(apolloRow.nome_empresa, snapshot) ?? ''
+    const membro = getOrAssignMember(body.nome, snapshot) ?? ''
 
-      // Gera mensagens de LinkedIn via IA
+    for (const decisor of decisores) {
+      const emailDecisore = hasEmployees ? '' : (body.email ?? '')
+      const linkedinDec   = decisor?.profile_url ?? ''
+
+      if (isDecissorDuplicate(emailDecisore, linkedinDec, snapshot)) {
+        leads_duplicados++
+        continue
+      }
+
+      const apolloRow = {
+        nome_empresa:     body.nome,
+        setor:            body.setor            ?? '',
+        porte:            body.funcionarios      ?? '',
+        cidade,
+        estado,
+        site:             body.website           ?? '',
+        linkedin_empresa: body.linkedin_url       ?? '',
+        nome_decisor:     decisor?.name           ?? '',
+        cargo_decisor:    decisor?.role           ?? '',
+        linkedin_decisor: linkedinDec,
+        email_decisor:    emailDecisore,
+        telefone_decisor: body.telefone           ?? '',
+      }
+
       let enrichment = {
         nota_conexao: '', mensagem_pitch: '', followup_1: '',
         followup_2: '', gancho_personalizado: analysis?.argumento_abertura ?? '',
         justificativa_ia: analysis?.justificativa ?? '',
       }
       try {
-        const result = await enrichLinkedInLead({
+        enrichment = await enrichLinkedInLead({
           nome_empresa:  body.nome,
-          setor:         body.setor      ?? '',
-          porte:         body.funcionarios ?? '',
+          setor:         body.setor         ?? '',
+          porte:         body.funcionarios  ?? '',
           cidade,
           estado,
-          nome_decisor:  decisor?.name    ?? '',
-          cargo_decisor: decisor?.role    ?? '',
+          nome_decisor:  decisor?.name      ?? '',
+          cargo_decisor: decisor?.role      ?? '',
         })
-        enrichment = result
       } catch (err) {
         console.error('[process-csv] enrichLinkedInLead error:', err)
       }
@@ -161,7 +158,7 @@ export async function POST(req: NextRequest) {
         data_proxima_acao:        '',
         tentativas_followup:      0,
         nota_conexao:             enrichment.nota_conexao,
-        mensagem_pitch:     enrichment.mensagem_pitch,
+        mensagem_pitch:           enrichment.mensagem_pitch,
         followup_1:               enrichment.followup_1,
         followup_2:               enrichment.followup_2,
         gancho_personalizado:     enrichment.gancho_personalizado,
@@ -172,14 +169,14 @@ export async function POST(req: NextRequest) {
         data_resposta:            '',
         data_descartado:          '',
       })
+      leads_inseridos++
 
-      // Dedup intra-lote: registra email + LinkedIn para não duplicar dentro do mesmo lote
       if (apolloRow.email_decisor)    snapshot.existingEmails.add(apolloRow.email_decisor.toLowerCase().trim())
       if (apolloRow.linkedin_decisor) snapshot.existingLinkedins.add(apolloRow.linkedin_decisor.toLowerCase().trim())
     }
   } catch (err) {
-    // Não quebra o fluxo existente — pipeline LinkedIn é best-effort
-    console.error('[process-csv] Leads_Master error:', err)
+    master_error = String((err as Error)?.message ?? err)
+    console.error('[process-csv] Leads_Master error:', master_error)
   }
 
   const lead = {
@@ -202,5 +199,5 @@ export async function POST(req: NextRequest) {
     ok:                 !!analysis,
   }
 
-  return Response.json({ ok: true, lead, row_number: rowNum })
+  return Response.json({ ok: true, lead, row_number: rowNum, leads_inseridos, leads_duplicados, master_error })
 }

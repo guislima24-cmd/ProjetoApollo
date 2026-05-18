@@ -624,8 +624,11 @@ export default function AgentePage() {
           body:    JSON.stringify(company),
         })
         if (apiRes.ok) {
-          const data = await apiRes.json() as { lead?: CsvLead }
+          const data = await apiRes.json() as { lead?: CsvLead; leads_inseridos?: number; leads_duplicados?: number; master_error?: string | null }
           if (data.lead) setCsvLeads(prev => [...prev, data.lead!])
+          if (data.master_error) console.error('[CSV] master_error:', data.master_error)
+          if ((data.leads_duplicados ?? 0) > 0) console.warn('[CSV] leads duplicados (já na fila):', data.leads_duplicados, company.nome)
+          if ((data.leads_inseridos ?? 0) > 0) console.log('[CSV] leads inseridos na fila:', data.leads_inseridos, company.nome)
         }
       } catch (err) {
         console.error('[CSV] process-csv error:', err)
