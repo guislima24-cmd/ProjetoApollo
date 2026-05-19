@@ -132,9 +132,14 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
 
   useEffect(() => {
     if (typeof chrome === 'undefined' || !chrome?.runtime?.sendMessage || !extensionId) return
-    chrome.runtime.sendMessage(extensionId, { type: 'LI_PING' }, (resp: any) => {
-      setExtensaoOk(!!resp?.ok)
-    })
+    try {
+      chrome.runtime.sendMessage(extensionId, { type: 'LI_PING' }, (resp: any) => {
+        void chrome.runtime.lastError  // consume to suppress unchecked-error warning
+        setExtensaoOk(!!resp?.ok)
+      })
+    } catch {
+      // Extension not installed or not accepting messages from this origin
+    }
   }, [extensionId])
 
   const leads = fila ? (fila[aba] ?? []) : []
@@ -173,6 +178,7 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
         mensagem,
         linkedin_url: linkedinUrl,
       }, async (resp: any) => {
+        void chrome.runtime.lastError
         if (resp?.ok) {
           setAvisoExtensao(null)
           await confirmarEnvio(lead, action, mensagem, campo)
@@ -216,13 +222,20 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
       const mensagem = mensagensEditadas[lead.id_lead] ?? (lead[CAMPO_POR_ABA['conexoes']] as string)
 
       const resultado = await new Promise<{ ok: boolean; error?: string }>(resolve => {
-        chrome.runtime.sendMessage(extensionId, {
-          type:         'LI_SEND_REQUEST',
-          action:       'enviar_conexao',
-          lead_id:      lead.id_lead,
-          mensagem,
-          linkedin_url: lead.linkedin_decisor,
-        }, (resp: any) => resolve(resp ?? { ok: false, error: 'Sem resposta da extensão' }))
+        try {
+          chrome.runtime.sendMessage(extensionId, {
+            type:         'LI_SEND_REQUEST',
+            action:       'enviar_conexao',
+            lead_id:      lead.id_lead,
+            mensagem,
+            linkedin_url: lead.linkedin_decisor,
+          }, (resp: any) => {
+            void chrome.runtime.lastError
+            resolve(resp ?? { ok: false, error: 'Sem resposta da extensão' })
+          })
+        } catch {
+          resolve({ ok: false, error: 'Extensão indisponível' })
+        }
       })
 
       if (resultado.ok) {
