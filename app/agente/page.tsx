@@ -221,7 +221,7 @@ export default function AgentePage() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     const saved = localStorage.getItem('agent_ext_id') ?? ''
-    const envId = process.env.NEXT_PUBLIC_EXTENSION_ID ?? ''
+    const envId = process.env.NEXT_PUBLIC_EXTENSION_ID ?? 'blpnncjjlegmhcljfahmljfbofhepmab'
     setExtId(saved || envId)
   }, [])
 

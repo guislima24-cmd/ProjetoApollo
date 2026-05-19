@@ -111,7 +111,7 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
   const [lotando, setLotando]             = useState(false)
   const [loteProgresso, setLoteProgresso] = useState<{ feitos: number; total: number } | null>(null)
 
-  const extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID ?? ''
+  const extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID ?? 'blpnncjjlegmhcljfahmljfbofhepmab'
 
   const carregar = useCallback(async () => {
     setLoading(true)
