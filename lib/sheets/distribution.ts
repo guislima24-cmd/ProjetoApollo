@@ -18,8 +18,10 @@ export interface ApolloRow {
 }
 
 const TAB               = 'Leads_Master'
-const INACTIVE_STATUSES = new Set<LeadStatus>(['respondeu', 'descartado'])
-const DEDUP_DAYS        = 90
+// Para capacidade: só enriquecido conta como "slot ocupado".
+// Após enviar conexão, o slot libera para novas empresas.
+const ACTIVE_FOR_CAPACITY = new Set<LeadStatus>(['enriquecido'])
+const DEDUP_DAYS          = 90
 
 // Só bloqueia reimport se uma ação já foi tomada com o decisor.
 // 'enriquecido' = importado mas não contatado → pode reimportar sem problema.
@@ -83,8 +85,9 @@ export async function getMasterSnapshot(): Promise<MasterSnapshot> {
     // Empresa → membro: sem cutoff, para reutilizar o mesmo membro em novos decisores da empresa
     if (nomeEmpresa && membro) empresaMembro.set(nomeEmpresa, membro)
 
-    // Capacidade: conta empresas ativas distintas por membro
-    if (membro && nomeEmpresa && !INACTIVE_STATUSES.has(status)) {
+    // Capacidade: só conta empresas com leads ainda não contactados (enriquecido).
+    // Após enviar conexão o slot libera, permitindo novas empresas.
+    if (membro && nomeEmpresa && ACTIVE_FOR_CAPACITY.has(status)) {
       const set = empresasPorMembro.get(membro) ?? new Set<string>()
       set.add(nomeEmpresa)
       empresasPorMembro.set(membro, set)
