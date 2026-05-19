@@ -107,7 +107,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         await chrome.storage.local.set({ recentLeads: updated })
         chrome.notifications?.create({
           type: 'basic',
-          iconUrl: 'icons/icon48.png',
+          iconUrl: chrome.runtime.getURL('icons/icon48.png'),
           title: 'ProspectAI — Status atualizado!',
           message: `${lead.nome}: ${message.status}`,
         })
@@ -136,7 +136,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
       chrome.notifications?.create({
         type: 'basic',
-        iconUrl: 'icons/icon48.png',
+        iconUrl: chrome.runtime.getURL('icons/icon48.png'),
         title: 'ProspectAI — Registrado!',
         message: `${payload.nome || 'Lead'} (${payload.empresa || 'LinkedIn'}) salvo na planilha.`,
       })
@@ -145,7 +145,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       await addToQueue(payload)
       chrome.notifications?.create({
         type: 'basic',
-        iconUrl: 'icons/icon48.png',
+        iconUrl: chrome.runtime.getURL('icons/icon48.png'),
         title: 'ProspectAI — Na fila',
         message: 'Abra o popup da extensão e sincronize quando estiver logado.',
       })
