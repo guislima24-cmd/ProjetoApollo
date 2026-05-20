@@ -137,3 +137,29 @@ export function getCanonicalMemberEmail(sessionEmail: string): string {
 export function isAdminEmail(email: string): boolean {
   return ADMIN_EMAILS.has(email.toLowerCase().trim())
 }
+
+// ── Perfis individuais dos membros ───────────────────────────────────────────
+// Nome e telefone usados para personalizar os templates de mensagem.
+// Admins editam via /admin/membros. Membros com campos vazios ficam bloqueados
+// de enviar mensagens até que o admin preencha.
+
+export interface MemberProfile {
+  nome:     string
+  telefone: string
+}
+
+export const MEMBER_PROFILES: Record<string, MemberProfile> = {
+  'guilherme.lima@ufabcjr.com.br':    { nome: 'Guilherme Lima', telefone: '(11) 96347-2667' },
+  'guilherme.midolli@ufabcjr.com.br': { nome: '', telefone: '' },
+  'larissa.preto@ufabcjr.com.br':     { nome: '', telefone: '' },
+  'gustavo.sumita@ufabcjr.com.br':    { nome: '', telefone: '' },
+  'anna.ferreira@ufabcjr.com.br':     { nome: '', telefone: '' },
+  'felipe.ikeda@ufabcjr.com.br':      { nome: '', telefone: '' },
+  'leonardo.aguilar@ufabcjr.com.br':  { nome: '', telefone: '' },
+  'maria.almeida@ufabcjr.com.br':     { nome: '', telefone: '' },
+  'tiago.santos@ufabcjr.com.br':      { nome: '', telefone: '' },
+}
+
+export function getMemberProfile(email: string): MemberProfile | null {
+  return MEMBER_PROFILES[email.toLowerCase().trim()] ?? null
+}
