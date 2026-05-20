@@ -20,11 +20,6 @@ interface CompanyGroup {
   leads:            LeadMaster[]
 }
 
-const CAMPO_POR_ABA: Record<Aba, keyof LeadMaster> = {
-  conexoes:  'nota_conexao',
-  followups: 'followup_1',
-}
-
 const LABEL_ABA: Record<Aba, string> = {
   conexoes:  'Conexões',
   followups: 'Follow-ups',
@@ -105,7 +100,9 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState<string | null>(null)
   const [extensaoOk, setExtensaoOk] = useState(false)
-  const [mensagensEditadas, setMensagensEditadas] = useState<Record<string, string>>({})
+  const [mensagensRenderizadas, setMensagensRenderizadas] = useState<Record<string, string>>({})
+  const [mensagensEditadas, setMensagensEditadas]         = useState<Record<string, string>>({})
+  const [mensagensCarregando, setMensagensCarregando]     = useState<Record<string, boolean>>({})
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [avisoExtensao, setAvisoExtensao] = useState<string | null>(null)
   const [lotando, setLotando]             = useState(false)
@@ -116,16 +113,49 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
   const carregar = useCallback(async () => {
     setLoading(true)
     setError(null)
+    let data: FilaData | null = null
     try {
-      const res  = await fetch('/api/leads/fila')
+      const res = await fetch('/api/leads/fila')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json() as FilaData
+      data = await res.json() as FilaData
       setFila(data)
     } catch {
       setError('Erro ao carregar fila.')
     } finally {
       setLoading(false)
     }
+
+    if (!data) return
+
+    // Renderiza mensagens de todos os leads em paralelo
+    const allLeads = [...(data.conexoes ?? []), ...(data.followups ?? [])]
+    if (!allLeads.length) return
+
+    const ids = allLeads.map(l => l.id_lead)
+    setMensagensCarregando(prev => ({ ...prev, ...Object.fromEntries(ids.map(id => [id, true])) }))
+
+    const results = await Promise.allSettled(
+      allLeads.map(async lead => {
+        try {
+          const r = await fetch(`/api/leads/${lead.id_lead}/pre-send`)
+          const d = await r.json() as { ok: boolean; mensagem?: string }
+          return { id: lead.id_lead, mensagem: d.ok && d.mensagem ? d.mensagem : '' }
+        } catch {
+          return { id: lead.id_lead, mensagem: '' }
+        }
+      })
+    )
+
+    const novas: Record<string, string> = {}
+    for (const r of results) {
+      if (r.status === 'fulfilled') novas[r.value.id] = r.value.mensagem
+    }
+    setMensagensRenderizadas(prev => ({ ...prev, ...novas }))
+    setMensagensCarregando(prev => {
+      const next = { ...prev }
+      for (const id of ids) delete next[id]
+      return next
+    })
   }, [])
 
   useEffect(() => { carregar() }, [carregar])
@@ -161,8 +191,24 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
     if (pendingId) return
     setPendingId(lead.id_lead)
 
-    const campo    = CAMPO_POR_ABA[aba] as string
-    const mensagem = mensagensEditadas[lead.id_lead] ?? (lead[CAMPO_POR_ABA[aba]] as string)
+    // Validação de status no backend ANTES de qualquer envio
+    if (action === 'enviar') {
+      try {
+        const checkRes = await fetch(`/api/leads/${lead.id_lead}/pre-send`)
+        if (!checkRes.ok) {
+          const d = await checkRes.json() as { motivo?: string; error?: string }
+          setAvisoExtensao(d.motivo ?? d.error ?? 'Este lead não pode receber mensagens agora.')
+          setPendingId(null)
+          return
+        }
+      } catch {
+        setAvisoExtensao('Erro ao verificar status do lead.')
+        setPendingId(null)
+        return
+      }
+    }
+
+    const mensagem = mensagensEditadas[lead.id_lead] ?? mensagensRenderizadas[lead.id_lead] ?? ''
 
     if (action === 'enviar' && extensaoOk) {
       const linkedinUrl = aba === 'conexoes' ? lead.linkedin_decisor : lead.link_conversa_linkedin
@@ -181,7 +227,7 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
         void chrome.runtime.lastError
         if (resp?.ok) {
           setAvisoExtensao(null)
-          await confirmarEnvio(lead, action, mensagem, campo)
+          await confirmarEnvio(lead, action)
         } else {
           const errMsg = resp?.error ?? 'Erro na extensão.'
           if (errMsg.includes('LIMITE_SEMANAL')) {
@@ -197,7 +243,7 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
       return
     }
 
-    await confirmarEnvio(lead, action, mensagem, campo)
+    await confirmarEnvio(lead, action)
   }
 
   async function enviarLote() {
@@ -218,8 +264,21 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
         continue
       }
 
-      const campo    = CAMPO_POR_ABA['conexoes'] as string
-      const mensagem = mensagensEditadas[lead.id_lead] ?? (lead[CAMPO_POR_ABA['conexoes']] as string)
+      // Pre-send check por lead no lote
+      let mensagem = mensagensEditadas[lead.id_lead] ?? mensagensRenderizadas[lead.id_lead] ?? ''
+      try {
+        const checkRes  = await fetch(`/api/leads/${lead.id_lead}/pre-send`)
+        const checkData = await checkRes.json() as { ok: boolean; mensagem?: string; motivo?: string }
+        if (!checkRes.ok) {
+          if (checkData.motivo?.includes('respondeu')) continue  // skip silencioso
+          erros.push(`${lead.nome_decisor || lead.nome_empresa}: ${checkData.motivo ?? 'Bloqueado'}`)
+          continue
+        }
+        if (!mensagensEditadas[lead.id_lead] && checkData.mensagem) mensagem = checkData.mensagem
+      } catch {
+        erros.push(`${lead.nome_decisor || lead.nome_empresa}: Erro ao verificar status`)
+        continue
+      }
 
       const resultado = await new Promise<{ ok: boolean; error?: string }>(resolve => {
         try {
@@ -242,7 +301,7 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
         await fetch('/api/leads/action', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ lead_id: lead.id_lead, action: 'enviar', mensagem, campo_mensagem: campo }),
+          body:    JSON.stringify({ lead_id: lead.id_lead, action: 'enviar' }),
         }).catch(() => {})
         setMensagensEditadas(prev => { const n = { ...prev }; delete n[lead.id_lead]; return n })
       } else {
@@ -267,17 +326,12 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
     if (msgs.length) setAvisoExtensao(msgs.join(' · '))
   }
 
-  async function confirmarEnvio(lead: LeadMaster, action: 'enviar' | 'pular' | 'descartar', mensagem: string, campo: string) {
+  async function confirmarEnvio(lead: LeadMaster, action: 'enviar' | 'pular' | 'descartar') {
     try {
       await fetch('/api/leads/action', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          lead_id:        lead.id_lead,
-          action,
-          mensagem:       action === 'enviar' ? mensagem : undefined,
-          campo_mensagem: action === 'enviar' ? campo    : undefined,
-        }),
+        body:    JSON.stringify({ lead_id: lead.id_lead, action }),
       })
       await carregar()
       setMensagensEditadas(prev => { const n = { ...prev }; delete n[lead.id_lead]; return n })
@@ -445,7 +499,9 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
                   key={lead.id_lead}
                   lead={lead}
                   aba={aba}
+                  mensagemRenderizada={mensagensRenderizadas[lead.id_lead] ?? null}
                   mensagemEditada={mensagensEditadas[lead.id_lead] ?? null}
+                  carregandoMensagem={!!mensagensCarregando[lead.id_lead]}
                   onMensagemEdit={msg => setMensagensEditadas(prev => ({ ...prev, [lead.id_lead]: msg }))}
                   onAcao={action => executarAcao(lead, action)}
                   loading={pendingId === lead.id_lead || lotando}
@@ -470,16 +526,18 @@ export default function FilaClient({ nomeUsuario }: { nomeUsuario: string; email
   )
 }
 
-function LeadCard({ lead, aba, mensagemEditada, onMensagemEdit, onAcao, loading, extensaoOk }: {
-  lead:            LeadMaster
-  aba:             Aba
-  mensagemEditada: string | null
-  onMensagemEdit:  (m: string) => void
-  onAcao:          (a: 'enviar' | 'pular' | 'descartar') => void
-  loading:         boolean
-  extensaoOk:      boolean
+function LeadCard({ lead, aba, mensagemRenderizada, mensagemEditada, carregandoMensagem, onMensagemEdit, onAcao, loading, extensaoOk }: {
+  lead:                LeadMaster
+  aba:                 Aba
+  mensagemRenderizada: string | null
+  mensagemEditada:     string | null
+  carregandoMensagem:  boolean
+  onMensagemEdit:      (m: string) => void
+  onAcao:              (a: 'enviar' | 'pular' | 'descartar') => void
+  loading:             boolean
+  extensaoOk:          boolean
 }) {
-  const mensagem    = mensagemEditada ?? (lead[CAMPO_POR_ABA[aba]] as string) ?? ''
+  const mensagem    = mensagemEditada ?? mensagemRenderizada ?? ''
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const linkedinUrl = aba === 'conexoes'
@@ -548,15 +606,26 @@ function LeadCard({ lead, aba, mensagemEditada, onMensagemEdit, onAcao, loading,
       )}
 
       {/* Textarea de mensagem */}
-      <textarea
-        ref={textareaRef}
-        value={mensagem}
-        onChange={e => onMensagemEdit(e.target.value)}
-        rows={5}
-        className="input"
-        style={{ resize: 'vertical', marginBottom: 14 }}
-        placeholder="Mensagem..."
-      />
+      {carregandoMensagem ? (
+        <div style={{
+          height: 100, borderRadius: 8, marginBottom: 14,
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 12, color: 'var(--text-muted)',
+        }}>
+          Gerando mensagem…
+        </div>
+      ) : (
+        <textarea
+          ref={textareaRef}
+          value={mensagem}
+          onChange={e => onMensagemEdit(e.target.value)}
+          rows={5}
+          className="input"
+          style={{ resize: 'vertical', marginBottom: 14 }}
+          placeholder="Mensagem..."
+        />
+      )}
 
       {/* Botões */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

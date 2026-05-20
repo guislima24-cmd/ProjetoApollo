@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 function makeClient(): SupabaseClient {
   const url = process.env.SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  console.log('[supabase] URL:', url?.substring(0, 30))
   if (!url || !key) {
     throw new Error('Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY')
   }

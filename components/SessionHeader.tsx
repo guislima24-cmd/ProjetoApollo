@@ -4,6 +4,7 @@ import { useSession, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
+import { MEMBER_PROFILES, isAdminEmail } from '@/lib/members.config'
 
 function NavLinkInner({
   href, children, exact,
@@ -85,7 +86,13 @@ function PlanilhaButton({ memberTab }: { memberTab: string }) {
 export default function SessionHeader() {
   const { data: session } = useSession()
 
+  const email            = session?.user?.email?.toLowerCase().trim() ?? ''
+  const profile          = MEMBER_PROFILES[email]
+  const perfilIncompleto = !!session && (!profile?.nome || !profile?.telefone)
+  const usuarioEAdmin    = isAdminEmail(email)
+
   return (
+    <>
     <header style={{
       borderBottom: '1px solid var(--border)',
       padding:      '0 24px',
@@ -126,7 +133,11 @@ export default function SessionHeader() {
             <NavLink href="/instalar">↓ Extensão</NavLink>
             <PlanilhaButton memberTab={session.user?.memberTab ?? ''} />
             {(session.user?.role === 'manager' || session.user?.role === 'pre-sales-leader') && (
-              <NavLink href="/admin/dashboard">Admin</NavLink>
+              <>
+                <NavLink href="/admin/dashboard">Admin</NavLink>
+                <NavLink href="/admin/membros">Membros</NavLink>
+                <NavLink href="/admin/configuracoes">Config</NavLink>
+              </>
             )}
           </div>
         )}
@@ -187,5 +198,42 @@ export default function SessionHeader() {
         )}
       </div>
     </header>
+
+    {perfilIncompleto && (
+      <div style={{
+        background:   'rgba(234,179,8,0.08)',
+        borderBottom: '1px solid rgba(234,179,8,0.3)',
+        padding:      '8px 24px',
+        display:      'flex',
+        alignItems:   'center',
+        gap:          10,
+        fontSize:     12,
+        color:        'var(--gold)',
+      }}>
+        <span style={{ fontWeight: 600 }}>⚠ Perfil incompleto</span>
+        <span style={{ color: 'var(--text-secondary)' }}>
+          Seu nome e/ou telefone não estão cadastrados — as mensagens serão bloqueadas ao enviar.
+        </span>
+        {usuarioEAdmin ? (
+          <Link
+            href="/admin/membros"
+            style={{
+              marginLeft:     'auto',
+              color:          'var(--gold)',
+              fontWeight:     700,
+              textDecoration: 'none',
+              whiteSpace:     'nowrap',
+            }}
+          >
+            Completar perfil →
+          </Link>
+        ) : (
+          <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            Peça ao administrador para completar seu cadastro.
+          </span>
+        )}
+      </div>
+    )}
+    </>
   )
 }

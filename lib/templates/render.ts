@@ -24,6 +24,8 @@ export function renderTemplate(
   templateKey: TemplateKey,
   vars: RenderVars,
   data: Date = new Date(),
+  profileOverride?: { nome: string; telefone: string },
+  linkApresentacaoOverride?: string,
 ): RenderResult {
   const template = MESSAGE_TEMPLATES[templateKey]
 
@@ -35,7 +37,7 @@ export function renderTemplate(
     }
   }
 
-  const profile = MEMBER_PROFILES[vars.membro_email.toLowerCase().trim()]
+  const profile = profileOverride ?? MEMBER_PROFILES[vars.membro_email.toLowerCase().trim()]
   if (!profile?.nome || !profile?.telefone) {
     return {
       sucesso:  false,
@@ -44,8 +46,10 @@ export function renderTemplate(
     }
   }
 
+  const linkApresentacao = linkApresentacaoOverride ?? LINK_APRESENTACAO_INSTITUCIONAL
+
   // followup_3 exige link da apresentação
-  if (templateKey === 'followup_3' && !LINK_APRESENTACAO_INSTITUCIONAL) {
+  if (templateKey === 'followup_3' && !linkApresentacao) {
     return {
       sucesso:  false,
       mensagem: '',
@@ -59,7 +63,7 @@ export function renderTemplate(
     .replaceAll('{empresa}',           vars.empresa)
     .replaceAll('{membro}',            profile.nome)
     .replaceAll('{telefone}',          profile.telefone)
-    .replaceAll('{link_apresentacao}', LINK_APRESENTACAO_INSTITUCIONAL)
+    .replaceAll('{link_apresentacao}', linkApresentacao)
 
   return { sucesso: true, mensagem }
 }

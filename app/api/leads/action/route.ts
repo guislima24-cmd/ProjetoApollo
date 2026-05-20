@@ -15,6 +15,9 @@ const NEXT_STATUS: Partial<Record<LeadStatus, LeadStatus>> = {
   conexao_aceita:     'mensagem_enviada',
   mensagem_enviada:   'followup_1_enviado',
   followup_1_enviado: 'followup_2_enviado',
+  followup_2_enviado: 'followup_3_enviado',
+  followup_3_enviado: 'followup_4_enviado',
+  followup_4_enviado: 'followup_5_enviado',
 }
 
 async function getCurrentStatus(leadId: string): Promise<LeadStatus | null> {
@@ -29,37 +32,6 @@ async function getCurrentStatus(leadId: string): Promise<LeadStatus | null> {
   return row ? (row[17] ?? null) as LeadStatus : null
 }
 
-async function atualizarMensagemEditada(leadId: string, aba: string, mensagem: string): Promise<void> {
-  const spreadsheetId = getSpreadsheetId()
-  const sheets = getSheets()
-
-  const colA = await withRetry(() =>
-    sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:A` }),
-  )
-  const ids = (colA.data.values ?? []) as string[][]
-  const idx = ids.findIndex((r, i) => i > 0 && r[0] === leadId)
-  if (idx === -1) return
-
-  const sheetRow = idx + 1
-  // aba: 'nota_conexao'(V=22), 'mensagem_pitch'(W=23), 'followup_1'(X=24), 'followup_2'(Y=25)
-  const colMap: Record<string, string> = {
-    nota_conexao:         `V${sheetRow}`,
-    mensagem_pitch: `W${sheetRow}`,
-    followup_1:           `X${sheetRow}`,
-    followup_2:           `Y${sheetRow}`,
-  }
-  const range = colMap[aba]
-  if (!range) return
-
-  await withRetry(() =>
-    sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range:            `'${TAB}'!${range}`,
-      valueInputOption: 'RAW',
-      requestBody:      { values: [[mensagem]] },
-    }),
-  )
-}
 
 async function adiararLead(leadId: string): Promise<void> {
   const spreadsheetId = getSpreadsheetId()
@@ -116,11 +88,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'enviar') {
-      // Salva mensagem editada se fornecida
-      if (mensagem && campo_mensagem) {
-        await atualizarMensagemEditada(lead_id, campo_mensagem, mensagem)
-      }
-
       const currentStatus = await getCurrentStatus(lead_id)
       if (!currentStatus) {
         return Response.json({ error: 'Lead não encontrado' }, { status: 404 })
@@ -142,7 +109,11 @@ export async function POST(req: NextRequest) {
       await updateLeadStatus(lead_id, nextStatus, email)
 
       // Preenche aba individual do membro (conexao_enviada) e incrementa coluna J (pitch/followups)
-      const INCREMENTA_J: LeadStatus[] = ['mensagem_enviada', 'followup_1_enviado', 'followup_2_enviado']
+      const INCREMENTA_J: LeadStatus[] = [
+        'mensagem_enviada',
+        'followup_1_enviado', 'followup_2_enviado',
+        'followup_3_enviado', 'followup_4_enviado', 'followup_5_enviado',
+      ]
       const precisaLerRow = nextStatus === 'conexao_enviada' || INCREMENTA_J.includes(nextStatus)
       if (precisaLerRow) {
         const memberTab = getTabByEmail(email)

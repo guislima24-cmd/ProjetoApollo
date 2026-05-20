@@ -37,10 +37,11 @@ const HEADERS: string[] = [
   'ultima_mensagem_recebida', // AD
   'data_resposta',            // AE
   'data_descartado',          // AF
+  'template_pitch_usado',     // AG
 ]
 
-// A-Z = 26 cols, AA-AF = 6 cols → last col = AF (col 32)
-const LAST_COL = 'AF'
+// A-Z = 26 cols, AA-AG = 7 cols → last col = AG (col 33)
+const LAST_COL = 'AG'
 
 let tabEnsured = false
 
@@ -106,6 +107,7 @@ function leadToRow(lead: LeadMaster): string[] {
     sanitize(lead.ultima_mensagem_recebida),
     lead.data_resposta,
     lead.data_descartado,
+    lead.template_pitch_usado,
   ]
 }
 
@@ -143,6 +145,7 @@ function rowToLead(row: string[]): LeadMaster {
     ultima_mensagem_recebida: row[29] ?? '',
     data_resposta:            row[30] ?? '',
     data_descartado:          row[31] ?? '',
+    template_pitch_usado:     row[32] ?? '',
   }
 }
 

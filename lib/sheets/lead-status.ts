@@ -12,12 +12,15 @@ const VALID_TRANSITIONS: Record<LeadStatus, LeadStatus[]> = {
   enriquecido:        ['conexao_enviada', 'descartado'],
   conexao_enviada:    ['conexao_aceita', 'descartado'],
   conexao_aceita:     ['mensagem_enviada'],
-  mensagem_enviada:   ['followup_1_enviado', 'respondeu'],
-  followup_1_enviado: ['followup_2_enviado', 'respondeu'],
-  followup_2_enviado: ['respondeu', 'descartado'],
+  mensagem_enviada:   ['followup_1_enviado', 'respondeu', 'descartado'],
+  followup_1_enviado: ['followup_2_enviado', 'respondeu', 'descartado'],
+  followup_2_enviado: ['followup_3_enviado', 'respondeu', 'descartado'],
+  followup_3_enviado: ['followup_4_enviado', 'respondeu', 'descartado'],
+  followup_4_enviado: ['followup_5_enviado', 'respondeu', 'descartado'],
+  followup_5_enviado: ['respondeu', 'descartado'],
   respondeu:              [],
   descartado:             [],
-  erro_enriquecimento:    ['nao_contatado'],  // permite retentar
+  erro_enriquecimento:    ['nao_contatado'],
 }
 
 export function isValidTransition(from: LeadStatus, to: LeadStatus): boolean {
@@ -38,10 +41,13 @@ function getDataProximaAcao(status: LeadStatus): string {
   switch (status) {
     case 'enriquecido':        return isoFromNow(0)
     case 'conexao_aceita':     return isoFromNow(0)
-    case 'mensagem_enviada':   return isoFromNow(3)
-    case 'followup_1_enviado': return isoFromNow(5)
-    case 'followup_2_enviado': return isoFromNow(7)
-    default:                   return ''  // null — aguarda evento externo
+    case 'mensagem_enviada':   return isoFromNow(3)   // CADENCIA_DIAS.followup_1
+    case 'followup_1_enviado': return isoFromNow(5)   // CADENCIA_DIAS.followup_2
+    case 'followup_2_enviado': return isoFromNow(7)   // CADENCIA_DIAS.followup_3
+    case 'followup_3_enviado': return isoFromNow(7)   // CADENCIA_DIAS.followup_4
+    case 'followup_4_enviado': return isoFromNow(10)  // CADENCIA_DIAS.followup_5
+    case 'followup_5_enviado': return isoFromNow(14)  // DIAS_ATE_DESCARTE_APOS_FU5
+    default:                   return ''
   }
 }
 
@@ -78,6 +84,7 @@ export async function updateLeadStatus(
   leadId:            string,
   newStatus:         LeadStatus,
   membroResponsavel: string,
+  nota?:             string,
 ): Promise<void> {
   const found = await findLeadRow(leadId)
   if (!found) throw new Error(`Lead não encontrado: ${leadId}`)
@@ -116,6 +123,7 @@ export async function updateLeadStatus(
       status_novo:        newStatus,
       membro_responsavel: membroResponsavel,
       timestamp:          now,
+      ...(nota ? { nota } : {}),
     } as any)
 
   if (error) {
@@ -135,6 +143,7 @@ export interface ActivityLogEntry {
   status_novo:        string
   membro_responsavel: string
   timestamp:          string
+  nota:               string | null
 }
 
 export async function getStatusHistory(leadId: string): Promise<ActivityLogEntry[]> {

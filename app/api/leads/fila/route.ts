@@ -2,12 +2,14 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
 import { getSheets, getSpreadsheetId, withRetry } from '@/lib/sheets/client'
 import { getCanonicalMemberEmail } from '@/lib/members.config'
-import type { LeadMaster } from '@/lib/types/lead'
+import { updateLeadStatus } from '@/lib/sheets/lead-status'
+import { MESSAGE_TEMPLATES } from '@/lib/templates/messages'
+import type { LeadMaster, LeadStatus } from '@/lib/types/lead'
 
 export const dynamic = 'force-dynamic'
 
 const TAB      = 'Leads_Master'
-const LAST_COL = 'AF'
+const LAST_COL = 'AG'
 const PAGE_SIZE = 20
 
 function rowToLead(row: string[]): LeadMaster {
@@ -44,6 +46,7 @@ function rowToLead(row: string[]): LeadMaster {
     ultima_mensagem_recebida: row[29] ?? '',
     data_resposta:            row[30] ?? '',
     data_descartado:          row[31] ?? '',
+    template_pitch_usado:     row[32] ?? '',
   }
 }
 
@@ -76,8 +79,17 @@ export async function GET(_req: NextRequest) {
   const today    = new Date()
   today.setHours(0, 0, 0, 0)
 
+  const FOLLOWUP_STATUSES = new Set<LeadStatus>([
+    'mensagem_enviada',
+    'followup_1_enviado',
+    'followup_2_enviado',
+    'followup_3_enviado',
+    'followup_4_enviado',
+    'followup_5_enviado',
+  ])
+
   const conexoes:  LeadMaster[] = []
-  const followups:  LeadMaster[] = []
+  const followups: LeadMaster[] = []
 
   for (const row of rows.slice(1)) {
     if (!row[0]) continue
@@ -89,11 +101,28 @@ export async function GET(_req: NextRequest) {
 
     if (status === 'enriquecido') {
       conexoes.push(lead)
-    } else if (status === 'mensagem_enviada' || status === 'followup_1_enviado') {
+    } else if (FOLLOWUP_STATUSES.has(status)) {
       if (!lead.data_proxima_acao) continue
       const proxima = new Date(lead.data_proxima_acao)
       proxima.setHours(0, 0, 0, 0)
-      if (proxima <= today) followups.push(lead)
+      if (proxima > today) continue
+
+      // Skip automático: followup_2 vazio → avança direto para followup_3
+      if (status === 'followup_1_enviado' && !MESSAGE_TEMPLATES.followup_2.trim()) {
+        try {
+          await updateLeadStatus(
+            lead.id_lead,
+            'followup_2_enviado',
+            'system',
+            'followup_2 pulado — template vazio',
+          )
+        } catch (err) {
+          console.error('[fila] skip followup_2 error:', err)
+        }
+        continue
+      }
+
+      followups.push(lead)
     }
   }
 

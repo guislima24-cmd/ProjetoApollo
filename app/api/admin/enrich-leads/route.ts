@@ -1,16 +1,16 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
 import { isAdminEmail } from '@/lib/members.config'
-import { enrichLinkedInLead } from '@/lib/agent/enrich-linkedin-lead'
+import { getPitchTemplate } from '@/lib/templates/cargo-classifier'
 import { updateLeadStatus } from '@/lib/sheets/lead-status'
 import { getSheets, getSpreadsheetId, withRetry } from '@/lib/sheets/client'
 import type { LeadMaster } from '@/lib/types/lead'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 300  // 5 min — lotes longos
+export const maxDuration = 300
 
 const TAB        = 'Leads_Master'
-const LAST_COL   = 'AF'
+const LAST_COL   = 'AG'
 const BATCH_SIZE = 20
 
 async function guardAdmin() {
@@ -69,7 +69,7 @@ function rowToLead(row: string[]): LeadMaster {
     data_proxima_acao:        row[19] ?? '',
     tentativas_followup:      parseInt(row[20] ?? '0', 10) || 0,
     nota_conexao:             row[21] ?? '',
-    mensagem_pitch:     row[22] ?? '',
+    mensagem_pitch:           row[22] ?? '',
     followup_1:               row[23] ?? '',
     followup_2:               row[24] ?? '',
     gancho_personalizado:     row[25] ?? '',
@@ -79,34 +79,21 @@ function rowToLead(row: string[]): LeadMaster {
     ultima_mensagem_recebida: row[29] ?? '',
     data_resposta:            row[30] ?? '',
     data_descartado:          row[31] ?? '',
+    template_pitch_usado:     row[32] ?? '',
   }
 }
 
-async function saveEnrichment(rowIdx: number, enrichment: {
-  nota_conexao:         string
-  mensagem_pitch: string
-  followup_1:           string
-  followup_2:           string
-  gancho_personalizado: string
-  justificativa_ia:     string
-}): Promise<void> {
+async function saveTemplatePitch(rowIdx: number, templateKey: string): Promise<void> {
   const spreadsheetId = getSpreadsheetId()
   const sheets = getSheets()
 
-  // Colunas V-AA (índices 21-26)
+  // Coluna AG (índice 32)
   await withRetry(() =>
     sheets.spreadsheets.values.update({
       spreadsheetId,
-      range:            `'${TAB}'!V${rowIdx}:AA${rowIdx}`,
+      range:            `'${TAB}'!AG${rowIdx}`,
       valueInputOption: 'RAW',
-      requestBody: { values: [[
-        enrichment.nota_conexao,
-        enrichment.mensagem_pitch,
-        enrichment.followup_1,
-        enrichment.followup_2,
-        enrichment.gancho_personalizado,
-        enrichment.justificativa_ia,
-      ]]},
+      requestBody:      { values: [[templateKey]] },
     }),
   )
 }
@@ -129,40 +116,20 @@ export async function POST(req: NextRequest) {
   for (const { rowIdx, lead } of leads) {
     if (!lead.id_lead) { erros++; continue }
 
-    let tentativas = 0
-    let sucesso    = false
+    try {
+      const templateKey = getPitchTemplate(lead.cargo_decisor)
+      await saveTemplatePitch(rowIdx, templateKey)
+      await updateLeadStatus(lead.id_lead, 'enriquecido', adminEmail)
 
-    while (tentativas < 3 && !sucesso) {
-      tentativas++
+      processados++
+      detalhes.push({ id: lead.id_lead, nome: lead.nome_empresa, ok: true })
+      console.log(`[enrich] OK: ${lead.nome_empresa} → ${templateKey}`)
+    } catch (err) {
       try {
-        const enrichment = await enrichLinkedInLead({
-          nome_empresa:  lead.nome_empresa,
-          setor:         lead.setor,
-          porte:         lead.porte,
-          cidade:        lead.cidade,
-          estado:        lead.estado,
-          nome_decisor:  lead.nome_decisor,
-          cargo_decisor: lead.cargo_decisor,
-        })
-
-        await saveEnrichment(rowIdx, enrichment)
-        await updateLeadStatus(lead.id_lead, 'enriquecido', adminEmail)
-
-        processados++
-        sucesso = true
-        detalhes.push({ id: lead.id_lead, nome: lead.nome_empresa, ok: true })
-        console.log(`[enrich] OK: ${lead.nome_empresa}`)
-      } catch (err) {
-        console.error(`[enrich] Tentativa ${tentativas}/3 falhou para ${lead.nome_empresa}:`, err)
-        if (tentativas === 3) {
-          // Marca como erro após 3 falhas
-          try {
-            await updateLeadStatus(lead.id_lead, 'erro_enriquecimento', adminEmail)
-          } catch {}
-          erros++
-          detalhes.push({ id: lead.id_lead, nome: lead.nome_empresa, ok: false, erro: String(err) })
-        }
-      }
+        await updateLeadStatus(lead.id_lead, 'erro_enriquecimento', adminEmail)
+      } catch {}
+      erros++
+      detalhes.push({ id: lead.id_lead, nome: lead.nome_empresa, ok: false, erro: String(err) })
     }
   }
 

@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth'
 import { analyzeCsvLead } from '@/lib/agent/source-ai-analysis-csv'
 import { saveCsvLead } from '@/lib/sheets'
 import { enrichLinkedInLead } from '@/lib/agent/enrich-linkedin-lead'
+import { getPitchTemplate } from '@/lib/templates/cargo-classifier'
 import { ensureLeadsMasterTab } from '@/lib/sheets/leads-master'
 import { getMasterSnapshot, isDecissorDuplicate, getOrAssignMember } from '@/lib/sheets/distribution'
 import { insertLead } from '@/lib/sheets/leads-master'
@@ -103,6 +104,21 @@ export async function POST(req: NextRequest) {
 
     const membro = getOrAssignMember(body.nome, snapshot) ?? ''
 
+    // IA analisa a empresa uma vez: potencial + melhor decisor + justificativa interna
+    let enrichment: Awaited<ReturnType<typeof enrichLinkedInLead>> | null = null
+    try {
+      enrichment = await enrichLinkedInLead({
+        nome_empresa:       body.nome,
+        setor:              body.setor        ?? '',
+        porte:              body.funcionarios ?? '',
+        cidade,
+        estado,
+        linkedin_employees,
+      })
+    } catch (err) {
+      console.error('[process-csv] enrichLinkedInLead error:', err)
+    }
+
     for (const decisor of decisores) {
       const emailDecisore = hasEmployees ? '' : (body.email ?? '')
       const linkedinDec   = decisor?.profile_url ?? ''
@@ -127,25 +143,6 @@ export async function POST(req: NextRequest) {
         telefone_decisor: body.telefone           ?? '',
       }
 
-      let enrichment = {
-        nota_conexao: '', mensagem_pitch: '', followup_1: '',
-        followup_2: '', gancho_personalizado: analysis?.argumento_abertura ?? '',
-        justificativa_ia: analysis?.justificativa ?? '',
-      }
-      try {
-        enrichment = await enrichLinkedInLead({
-          nome_empresa:  body.nome,
-          setor:         body.setor         ?? '',
-          porte:         body.funcionarios  ?? '',
-          cidade,
-          estado,
-          nome_decisor:  decisor?.name      ?? '',
-          cargo_decisor: decisor?.role      ?? '',
-        })
-      } catch (err) {
-        console.error('[process-csv] enrichLinkedInLead error:', err)
-      }
-
       const now = new Date().toISOString()
       await insertLead({
         ...apolloRow,
@@ -157,17 +154,18 @@ export async function POST(req: NextRequest) {
         data_ultima_acao:         now,
         data_proxima_acao:        '',
         tentativas_followup:      0,
-        nota_conexao:             enrichment.nota_conexao,
-        mensagem_pitch:           enrichment.mensagem_pitch,
-        followup_1:               enrichment.followup_1,
-        followup_2:               enrichment.followup_2,
-        gancho_personalizado:     enrichment.gancho_personalizado,
-        justificativa_ia:         enrichment.justificativa_ia,
-        observacoes:              '',
+        nota_conexao:             '',
+        mensagem_pitch:           '',
+        followup_1:               '',
+        followup_2:               '',
+        gancho_personalizado:     analysis?.argumento_abertura          ?? '',
+        justificativa_ia:         enrichment?.justificativa_interna ?? analysis?.justificativa ?? '',
+        observacoes:              enrichment?.observacoes               ?? '',
         link_conversa_linkedin:   '',
         ultima_mensagem_recebida: '',
         data_resposta:            '',
         data_descartado:          '',
+        template_pitch_usado:     getPitchTemplate(decisor?.role ?? ''),
       })
       leads_inseridos++
 

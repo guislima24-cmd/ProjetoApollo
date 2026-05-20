@@ -7,6 +7,9 @@ export type LeadStatus =
   | 'mensagem_enviada'
   | 'followup_1_enviado'
   | 'followup_2_enviado'
+  | 'followup_3_enviado'
+  | 'followup_4_enviado'
+  | 'followup_5_enviado'
   | 'respondeu'
   | 'descartado'
   | 'erro_enriquecimento'
@@ -47,4 +50,5 @@ export interface LeadMaster {
   ultima_mensagem_recebida: string      // AD
   data_resposta:            string      // AE - ISO
   data_descartado:          string      // AF - ISO
+  template_pitch_usado:     string      // AG
 }
