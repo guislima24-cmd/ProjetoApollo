@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/agendador",
+      "schedule": "0 10 * * *"
+    }
+  ]
+}

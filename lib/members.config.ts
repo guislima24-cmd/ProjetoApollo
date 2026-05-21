@@ -120,6 +120,11 @@ export function getTabByEmail(email: string): string | null {
   return TAB_OVERRIDES[email.toLowerCase().trim()] ?? null
 }
 
+/** Reverse lookup: retorna o email canônico dado o nome da aba (col R da Leads CSV). */
+export function getEmailByTabName(tabName: string): string | null {
+  return MEMBERS_DISTRIBUTION.find(m => m.nome === tabName)?.email ?? null
+}
+
 /**
  * Resolve o email canônico do membro em MEMBERS_DISTRIBUTION.
  * Necessário porque um membro pode ter emails alternativos (ex: Gmail pessoal + @ufabcjr).

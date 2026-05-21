@@ -134,6 +134,78 @@ export async function updateLeadStatus(
   console.log(`[lead-status] ${leadId}: ${currentStatus} → ${newStatus} (${membroResponsavel})`)
 }
 
+// ── updateLeadStatusInTab ─────────────────────────────────────────────────────
+// Atualiza status de um lead na aba individual do membro (fluxo novo).
+// Mantém updateLeadStatus() acima para compatibilidade com cron legado.
+
+export async function updateLeadStatusInTab(
+  sysId:     string,
+  memberTab: string,
+  newStatus: LeadStatus,
+  nota?:     string,
+): Promise<void> {
+  const spreadsheetId = getSpreadsheetId()
+  const sheets        = getSheets()
+
+  // Localiza a linha pelo sys_id (col V)
+  const colV = await withRetry(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${memberTab}'!V:V`,
+    }),
+  )
+  const ids     = (colV.data.values ?? []) as string[][]
+  const rowIdx  = ids.findIndex((r, i) => i > 0 && (r[0] ?? '') === sysId)
+  if (rowIdx === -1) throw new Error(`sys_id não encontrado na aba "${memberTab}": ${sysId}`)
+
+  const sheetRow = rowIdx + 1  // 1-based
+
+  // Lê status atual (col W)
+  const statusRes = await withRetry(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${memberTab}'!W${sheetRow}:W${sheetRow}`,
+    }),
+  )
+  const currentStatus = (statusRes.data.values?.[0]?.[0] ?? 'nao_atribuido') as LeadStatus
+
+  if (!isValidTransition(currentStatus, newStatus)) {
+    throw new Error(`Transição inválida: ${currentStatus} → ${newStatus}`)
+  }
+
+  const now         = new Date().toISOString()
+  const proximaAcao = getDataProximaAcao(newStatus)
+
+  // Atualiza W (sys_status), X (sys_data_ultima_acao), Y (sys_data_proxima_acao)
+  await withRetry(() =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range:            `'${memberTab}'!W${sheetRow}:Y${sheetRow}`,
+      valueInputOption: 'RAW',
+      requestBody:      { values: [[newStatus, now, proximaAcao]] },
+    }),
+  )
+
+  // Log no Supabase
+  const { error } = await supabase()
+    .from('activity_log')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .insert({
+      lead_id:            sysId,
+      status_anterior:    currentStatus,
+      status_novo:        newStatus,
+      membro_responsavel: memberTab,
+      timestamp:          now,
+      ...(nota ? { nota } : {}),
+    } as any)
+
+  if (error) {
+    console.error('[lead-status] Supabase log error:', error.message)
+  }
+
+  console.log(`[lead-status/tab] ${sysId} (${memberTab}): ${currentStatus} → ${newStatus}`)
+}
+
 // ── getStatusHistory ──────────────────────────────────────────────────────────
 
 export interface ActivityLogEntry {

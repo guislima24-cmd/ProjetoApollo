@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
 import { isAdminEmail, MEMBERS_DISTRIBUTION } from '@/lib/members.config'
 import { getSheets, getSpreadsheetId, withRetry } from '@/lib/sheets/client'
+import { readLeadsCSV, parseDecisoresInfo } from '@/lib/sheets/leads-csv'
 import type { LeadStatus } from '@/lib/types/lead'
 
 export const dynamic = 'force-dynamic'
@@ -23,9 +24,13 @@ export async function GET(_req: NextRequest) {
   const spreadsheetId = getSpreadsheetId()
   const sheets = getSheets()
 
-  const res = await withRetry(() =>
-    sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:S` }),
-  )
+  // Lê Leads CSV em paralelo com Leads_Master para o contador de pendentes
+  const [res, leadsCSV] = await Promise.all([
+    withRetry(() =>
+      sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:S` }),
+    ),
+    readLeadsCSV().catch(() => [] as Awaited<ReturnType<typeof readLeadsCSV>>),
+  ])
 
   const rows    = (res.data.values ?? []) as string[][]
   const data    = rows.slice(1).filter(r => r[0])
@@ -87,11 +92,16 @@ export async function GET(_req: NextRequest) {
   const taxaResposta = totalComMensagem > 0
     ? Math.round(((statusCounts['respondeu'] ?? 0) / totalComMensagem) * 100) : 0
 
+  const pendentesEnriquecimento = leadsCSV.filter(
+    l => parseDecisoresInfo(l.decisores_linkedin).status === 'pendente_enriquecimento',
+  ).length
+
   return Response.json({
     statusCounts,
     membros,
     taxaAceitacao,
     taxaResposta,
     totalLeads: data.length,
+    pendentesEnriquecimento,
   })
 }

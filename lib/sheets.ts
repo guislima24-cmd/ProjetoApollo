@@ -1455,6 +1455,8 @@ const CSV_HEADERS = [
   'Argumento de Abertura',  // P
   'Decisores LinkedIn',     // Q
   'Membro',                 // R
+  'Prospectado',            // S
+  'Data Prospecção',        // T
 ]
 
 let csvTabEnsured = false
@@ -1473,7 +1475,7 @@ async function ensureCsvTab(): Promise<void> {
   }
   await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${CSV_TAB}'!A1:R1`,
+    range: `'${CSV_TAB}'!A1:T1`,
     valueInputOption: 'RAW',
     requestBody: { values: [CSV_HEADERS] },
   }))
@@ -1503,14 +1505,12 @@ export async function saveCsvLead(params: {
   const spreadsheetId = getSpreadsheetId()
   const sheets = getSheets()
 
-  // Cada decisor em linhas separadas: "Nome — Cargo\nhttps://url"
-  // Sheets auto-detecta URLs como hiperlinks clicáveis
+  // Formato: "Nome | URL\nNome2 | URL2" (um decisor por linha)
   const employees = params.linkedin_employees ?? []
   const decisoresCell = employees.length === 0 ? '' :
-    employees.map(e => {
-      const label = `${e.name}${e.role ? ' — ' + e.role : ''}`
-      return e.profile_url ? `${label}\n${e.profile_url}` : label
-    }).join('\n\n')
+    employees.map(e =>
+      e.profile_url ? `${e.name} | ${e.profile_url}` : e.name,
+    ).join('\n')
 
   const now = new Date().toLocaleDateString('pt-BR')
   const row = [
@@ -1532,6 +1532,8 @@ export async function saveCsvLead(params: {
     sanitize(params.argumento_abertura ?? ''),
     decisoresCell,
     sanitize(params.memberTab),
+    '',  // S — Prospectado (gerenciado pela fila)
+    '',  // T — Data Prospecção (gerenciado pela fila)
   ]
 
   // Dedup por empresa (col B)
@@ -1553,7 +1555,7 @@ export async function saveCsvLead(params: {
   if (existingRow > 1) {
     await withRetry(() => sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${CSV_TAB}'!A${existingRow}:R${existingRow}`,
+      range: `'${CSV_TAB}'!A${existingRow}:T${existingRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     }))
@@ -1567,7 +1569,7 @@ export async function saveCsvLead(params: {
   const targetRow = Math.max(2, lastDataRow + 1)
   await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${CSV_TAB}'!A${targetRow}:R${targetRow}`,
+    range: `'${CSV_TAB}'!A${targetRow}:T${targetRow}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   }))

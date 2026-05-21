@@ -1,101 +1,75 @@
-import { getSheets, getSpreadsheetId, withRetry } from './client'
-import { MEMBERS_DISTRIBUTION } from '@/lib/members.config'
-import type { LeadStatus } from '@/lib/types/lead'
+import { MEMBERS_DISTRIBUTION, getEmailByTabName } from '@/lib/members.config'
+import { readLeadsCSV, parseDecisores } from './leads-csv'
 
-export interface ApolloRow {
-  nome_empresa:     string
-  setor:            string
-  porte:            string
-  cidade:           string
-  estado:           string
-  site:             string
-  linkedin_empresa: string
-  nome_decisor:     string
-  cargo_decisor:    string
-  linkedin_decisor: string
-  email_decisor:    string
-  telefone_decisor: string
-}
+// Para capacidade: slot ocupado = empresa com membro atribuído e ainda não finalizada.
+// Uma empresa conta como ativa enquanto membro estiver na col R e prospectado não cobriu todos os decisores.
+const DEDUP_DAYS = 90
 
-const TAB               = 'Leads_Master'
-// Para capacidade: só enriquecido conta como "slot ocupado".
-// Após enviar conexão, o slot libera para novas empresas.
-const ACTIVE_FOR_CAPACITY = new Set<LeadStatus>(['enriquecido'])
-const DEDUP_DAYS          = 90
-
-// Só bloqueia reimport se uma ação já foi tomada com o decisor.
-// 'enriquecido' = importado mas não contatado → pode reimportar sem problema.
-const DEDUP_BLOCK_STATUSES = new Set<LeadStatus>([
-  'conexao_enviada', 'conexao_aceita',
-  'mensagem_enviada', 'followup_1_enviado', 'followup_2_enviado', 'respondeu',
-])
-
-// ── Snapshot da Leads_Master ──────────────────────────────────────────────────
+// ── Snapshot da Leads CSV ─────────────────────────────────────────────────────
 
 interface MasterSnapshot {
   existingEmails:    Set<string>          // emails de decisores já cadastrados (90 dias)
   existingLinkedins: Set<string>          // LinkedIn URLs de decisores já cadastrados (90 dias)
-  empresaMembro:     Map<string, string>  // empresa → email do membro responsável (todos os tempos)
-  activeCounts:      Map<string, number>  // membro → nº de empresas ativas distintas
+  empresaMembro:     Map<string, string>  // empresa (lower) → email canônico do membro
+  activeCounts:      Map<string, number>  // email membro → nº de empresas com membro atribuído
 }
 
 export async function getMasterSnapshot(): Promise<MasterSnapshot> {
-  const spreadsheetId = getSpreadsheetId()
-  const sheets = getSheets()
-
-  const res = await withRetry(() =>
-    sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `'${TAB}'!B:R`,  // B=nome_empresa, K=linkedin_decisor, L=email_decisor, O=data_importacao, P=membro, R=status
-    }),
-  )
-
-  const rows = (res.data.values ?? []) as string[][]
+  const rows   = await readLeadsCSV()
   const cutoff = Date.now() - DEDUP_DAYS * 86_400_000
 
   const existingEmails    = new Set<string>()
   const existingLinkedins = new Set<string>()
   const empresaMembro     = new Map<string, string>()
   const activeCounts      = new Map<string, number>()
-  const empresasPorMembro = new Map<string, Set<string>>()
 
   for (const m of MEMBERS_DISTRIBUTION) {
     activeCounts.set(m.email, 0)
-    empresasPorMembro.set(m.email, new Set())
   }
 
-  for (const row of rows.slice(1)) {
-    const nomeEmpresa      = (row[0]  ?? '').toLowerCase().trim()  // B
-    const linkedinDecisora = (row[9]  ?? '').toLowerCase().trim()  // K
-    const emailDecisora    = (row[10] ?? '').toLowerCase().trim()  // L
-    const dataImport       = row[13]  ?? ''                        // O
-    const membro           = (row[14] ?? '').toLowerCase().trim()  // P
-    const status           = (row[16] ?? '') as LeadStatus         // R
+  for (const lead of rows) {
+    const nomeEmpresa = lead.empresa.toLowerCase().trim()
+    const membroTab   = lead.membro.trim()
 
-    // Dedup: só bloqueia reimport se uma ação já foi tomada com o decisor.
-    // 'enriquecido' = importado mas nunca contatado → não bloqueia.
-    if (dataImport && DEDUP_BLOCK_STATUSES.has(status)) {
-      const ts = new Date(dataImport).getTime()
-      if (!isNaN(ts) && ts > cutoff) {
-        if (emailDecisora)    existingEmails.add(emailDecisora)
-        if (linkedinDecisora) existingLinkedins.add(linkedinDecisora)
+    // Dedup por LinkedIn URL dos decisores (col Q)
+    if (lead.decisores_linkedin) {
+      const ts = lead.data_prospeccao
+        ? new Date(lead.data_prospeccao.split('/').reverse().join('-')).getTime()
+        : NaN
+      const dentroJanela = isNaN(ts) || ts > cutoff
+
+      if (dentroJanela && lead.prospectado) {
+        // Só bloqueia decisores que já foram prospectados
+        const tentados    = lead.prospectado.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n))
+        const decisores   = parseDecisores(lead.decisores_linkedin)
+        for (const idx of tentados) {
+          const d = decisores[idx]
+          if (d?.url) existingLinkedins.add(d.url.toLowerCase().trim())
+        }
       }
     }
 
-    // Empresa → membro: sem cutoff, para reutilizar o mesmo membro em novos decisores da empresa
-    if (nomeEmpresa && membro) empresaMembro.set(nomeEmpresa, membro)
-
-    // Capacidade: só conta empresas com leads ainda não contactados (enriquecido).
-    // Após enviar conexão o slot libera, permitindo novas empresas.
-    if (membro && nomeEmpresa && ACTIVE_FOR_CAPACITY.has(status)) {
-      const set = empresasPorMembro.get(membro) ?? new Set<string>()
-      set.add(nomeEmpresa)
-      empresasPorMembro.set(membro, set)
+    // Dedup por email da empresa (col I) como fallback grosso
+    if (lead.email) {
+      const ts = lead.data_prospeccao
+        ? new Date(lead.data_prospeccao.split('/').reverse().join('-')).getTime()
+        : NaN
+      const dentroJanela = isNaN(ts) || ts > cutoff
+      if (dentroJanela && lead.prospectado) {
+        existingEmails.add(lead.email.toLowerCase().trim())
+      }
     }
-  }
 
-  for (const [membro, empresas] of empresasPorMembro) {
-    activeCounts.set(membro, empresas.size)
+    // Empresa → membro: converte tab name → email canônico
+    if (nomeEmpresa && membroTab) {
+      const membroEmail = getEmailByTabName(membroTab)
+      if (membroEmail) {
+        empresaMembro.set(nomeEmpresa, membroEmail)
+
+        // Conta como slot ativo enquanto empresa tiver membro (independente de status)
+        activeCounts.set(membroEmail, (activeCounts.get(membroEmail) ?? 0) + 1)
+      }
+    }
   }
 
   return { existingEmails, existingLinkedins, empresaMembro, activeCounts }
@@ -121,7 +95,6 @@ export function getOrAssignMember(nomeEmpresa: string, snapshot: MasterSnapshot)
   if (existing) return existing
 
   // Nova empresa → distribui para o membro ativo com menor carga.
-  // Sem limite de capacidade — sempre atribui a alguém.
   const ativos = MEMBERS_DISTRIBUTION.filter(m => m.ativo)
   if (!ativos.length) return null
 

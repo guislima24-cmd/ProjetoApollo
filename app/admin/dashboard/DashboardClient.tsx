@@ -11,11 +11,12 @@ interface MembroStats extends MemberDistribution {
 }
 
 interface DashboardData {
-  statusCounts:  Record<string, number>
-  membros:       MembroStats[]
-  taxaAceitacao: number
-  taxaResposta:  number
-  totalLeads:    number
+  statusCounts:            Record<string, number>
+  membros:                 MembroStats[]
+  taxaAceitacao:           number
+  taxaResposta:            number
+  totalLeads:              number
+  pendentesEnriquecimento: number
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -123,6 +124,22 @@ export default function DashboardClient() {
       {enrichMsg && (
         <div className="card" style={{ marginBottom: 20, fontSize: 13, color: 'var(--text-secondary)' }}>
           {enrichMsg}
+        </div>
+      )}
+
+      {data.pendentesEnriquecimento > 0 && (
+        <div className="card" style={{
+          marginBottom: 20, padding: '12px 16px',
+          border: '1px solid var(--yellow)',
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 13,
+        }}>
+          <span style={{ fontSize: 16 }}>⚠</span>
+          <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>
+            {data.pendentesEnriquecimento} lead{data.pendentesEnriquecimento > 1 ? 's' : ''} aguardando enriquecimento na Leads CSV
+          </span>
+          <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>
+            — col Q = "Novo", reprocessar pelo agente
+          </span>
         </div>
       )}
 
