@@ -1,107 +1,163 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
-import { isAdminEmail, MEMBERS_DISTRIBUTION } from '@/lib/members.config'
-import { getSheets, getSpreadsheetId, withRetry } from '@/lib/sheets/client'
+import { isAdminEmail, MEMBER_TABS, MEMBERS_DISTRIBUTION, getTabByEmail } from '@/lib/members.config'
+import { readTabSummary, TabSummaryRow } from '@/lib/sheets/member-tab'
 import { readLeadsCSV, parseDecisoresInfo } from '@/lib/sheets/leads-csv'
-import type { LeadStatus } from '@/lib/types/lead'
 
 export const dynamic = 'force-dynamic'
 
-const TAB = 'Leads_Master'
+const ACEITAS_STATUS = new Set([
+  'conexao_aceita', 'mensagem_enviada',
+  'followup_1_enviado', 'followup_2_enviado', 'followup_3_enviado',
+  'followup_4_enviado', 'followup_5_enviado', 'respondeu',
+])
+const COM_MSG_STATUS = new Set([
+  'mensagem_enviada',
+  'followup_1_enviado', 'followup_2_enviado', 'followup_3_enviado',
+  'followup_4_enviado', 'followup_5_enviado', 'respondeu',
+])
 
-const ENVIADOS: LeadStatus[] = [
-  'conexao_enviada', 'conexao_aceita', 'mensagem_enviada',
-  'followup_1_enviado', 'followup_2_enviado', 'respondeu',
-]
-const PENDENTES_FILA: LeadStatus[] = ['enriquecido', 'conexao_aceita']
+function parseMes(data_conexao: string): string {
+  const p = (data_conexao ?? '').trim().split('/')
+  if (p.length === 3 && p[2].length === 4) return `${p[2]}-${p[1].padStart(2, '0')}`
+  const d = (data_conexao ?? '').trim().split('-')
+  if (d.length === 3 && d[0].length === 4) return `${d[0]}-${d[1].padStart(2, '0')}`
+  return ''
+}
 
-export async function GET(_req: NextRequest) {
+function labelMes(yyyyMM: string): string {
+  const meses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
+  const [y, m] = yyyyMM.split('-')
+  return `${meses[parseInt(m, 10) - 1]}/${y.slice(2)}`
+}
+
+function isAceita(r: TabSummaryRow): boolean {
+  if (r.sys_status) return ACEITAS_STATUS.has(r.sys_status)
+  return r.marcou_rd !== '' && r.marcou_rd !== 'Aguardando conexão'
+}
+
+function isComMsg(r: TabSummaryRow): boolean {
+  return COM_MSG_STATUS.has(r.sys_status)
+}
+
+function isRespondeu(r: TabSummaryRow): boolean {
+  return r.sys_status === 'respondeu'
+}
+
+function isRD(r: TabSummaryRow): boolean {
+  return r.marcou_rd !== '' && r.marcou_rd !== 'Aguardando conexão'
+}
+
+function isContrato(r: TabSummaryRow): boolean {
+  return r.contrato !== ''
+}
+
+export async function GET(req: NextRequest) {
   const session = await auth()
   if (!session?.user?.email || !isAdminEmail(session.user.email)) {
     return Response.json({ error: 'Acesso negado' }, { status: 403 })
   }
 
-  const spreadsheetId = getSpreadsheetId()
-  const sheets = getSheets()
+  const url      = new URL(req.url)
+  const mesParam = url.searchParams.get('mes')
 
-  // Lê Leads CSV em paralelo com Leads_Master para o contador de pendentes
-  const [res, leadsCSV] = await Promise.all([
-    withRetry(() =>
-      sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'!A:S` }),
+  // Lê todas as abas dos membros + Leads CSV em paralelo
+  const [tabResults, leadsCSV] = await Promise.all([
+    Promise.allSettled(
+      MEMBER_TABS.map(tab => readTabSummary(tab).then(rows => ({ tab, rows }))),
     ),
     readLeadsCSV().catch(() => [] as Awaited<ReturnType<typeof readLeadsCSV>>),
   ])
 
-  const rows    = (res.data.values ?? []) as string[][]
-  const data    = rows.slice(1).filter(r => r[0])
-  const weekAgo = new Date(Date.now() - 7 * 86_400_000)
-
-  const statusCounts: Record<string, number> = {}
-  const membroStats: Record<string, {
-    total_ativos:    number
-    enviados_semana: number
-    responderam:     number
-    pendentes_fila:  number
-  }> = {}
-
-  for (const m of MEMBERS_DISTRIBUTION) {
-    membroStats[m.email] = { total_ativos: 0, enviados_semana: 0, responderam: 0, pendentes_fila: 0 }
-  }
-
-  for (const row of data) {
-    const status        = (row[17] ?? 'nao_contatado') as LeadStatus
-    const email         = (row[15] ?? '').toLowerCase().trim()
-    const dataUltimaAcao = row[18] ? new Date(row[18]) : null
-
-    statusCounts[status] = (statusCounts[status] ?? 0) + 1
-
-    const stats = membroStats[email]
-    if (!stats) continue
-
-    if (status !== 'descartado') stats.total_ativos++
-    if (status === 'respondeu')  stats.responderam++
-    if (ENVIADOS.includes(status) && dataUltimaAcao && dataUltimaAcao >= weekAgo) {
-      stats.enviados_semana++
+  // Agrega todas as linhas com o nome da aba
+  const allLeads: Array<TabSummaryRow & { membro: string }> = []
+  for (const r of tabResults) {
+    if (r.status === 'fulfilled') {
+      for (const row of r.value.rows) {
+        allLeads.push({ ...row, membro: r.value.tab })
+      }
     }
-    if (PENDENTES_FILA.includes(status)) stats.pendentes_fila++
   }
 
-  const membros = MEMBERS_DISTRIBUTION.map(m => ({
-    ...m,
-    ...membroStats[m.email],
-  }))
+  // Meses disponíveis (do dado mais antigo ao mais recente)
+  const mesSet = new Set<string>()
+  for (const l of allLeads) {
+    const m = parseMes(l.data_conexao)
+    if (m) mesSet.add(m)
+  }
+  const mesesDisponiveis = [...mesSet].sort().reverse()
 
-  const totalConexaoEnviada =
-    (statusCounts['conexao_enviada']      ?? 0) +
-    (statusCounts['conexao_aceita']       ?? 0) +
-    (statusCounts['mensagem_enviada']     ?? 0) +
-    (statusCounts['followup_1_enviado']   ?? 0) +
-    (statusCounts['followup_2_enviado']   ?? 0) +
-    (statusCounts['respondeu']            ?? 0)
+  const now        = new Date()
+  const currentMes = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const mesSel     = mesParam ?? mesesDisponiveis[0] ?? currentMes
 
-  const totalAceita = totalConexaoEnviada - (statusCounts['conexao_enviada'] ?? 0)
-  const taxaAceitacao = totalConexaoEnviada > 0
-    ? Math.round((totalAceita / totalConexaoEnviada) * 100) : 0
+  // Leads do mês selecionado
+  const leadsMes = allLeads.filter(l => parseMes(l.data_conexao) === mesSel)
 
-  const totalComMensagem =
-    (statusCounts['mensagem_enviada']   ?? 0) +
-    (statusCounts['followup_1_enviado'] ?? 0) +
-    (statusCounts['followup_2_enviado'] ?? 0) +
-    (statusCounts['respondeu']          ?? 0)
+  const conexoes   = leadsMes.length
+  const aceitas    = leadsMes.filter(isAceita).length
+  const comMsg     = leadsMes.filter(isComMsg).length
+  const responderam = leadsMes.filter(isRespondeu).length
+  const rds        = leadsMes.filter(isRD).length
+  const contratos  = leadsMes.filter(isContrato).length
+  const taxaAceitacao = conexoes > 0 ? Math.round(aceitas    / conexoes * 100) : 0
+  const taxaResposta  = aceitas  > 0 ? Math.round(responderam / aceitas  * 100) : 0
 
-  const taxaResposta = totalComMensagem > 0
-    ? Math.round(((statusCounts['respondeu'] ?? 0) / totalComMensagem) * 100) : 0
+  const funil = [
+    { name: 'Enviadas',   valor: conexoes },
+    { name: 'Aceitas',    valor: aceitas },
+    { name: 'c/ Mensagem', valor: comMsg },
+    { name: 'Responderam', valor: responderam },
+    { name: 'RD marcado', valor: rds },
+    { name: 'Contrato',   valor: contratos },
+  ]
+
+  // Stats por membro no mês selecionado
+  const memMap: Record<string, { conexoes: number; aceitas: number; responderam: number; rds: number }> = {}
+  for (const tab of MEMBER_TABS) {
+    memMap[tab] = { conexoes: 0, aceitas: 0, responderam: 0, rds: 0 }
+  }
+  for (const l of leadsMes) {
+    const s = memMap[l.membro]
+    if (!s) continue
+    s.conexoes++
+    if (isAceita(l))    s.aceitas++
+    if (isRespondeu(l)) s.responderam++
+    if (isRD(l))        s.rds++
+  }
+  const porMembro = MEMBER_TABS
+    .map(tab => ({ nome: tab, ...memMap[tab] }))
+    .filter(m => m.conexoes > 0)
+
+  // Histórico: últimos 6 meses
+  const historico = Array.from({ length: 6 }, (_, i) => {
+    const d   = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    const ls  = allLeads.filter(l => parseMes(l.data_conexao) === key)
+    return {
+      mes:        labelMes(key),
+      conexoes:   ls.length,
+      responderam: ls.filter(isRespondeu).length,
+    }
+  })
+
+  // Lista de membros para a tabela admin (com stats do mês)
+  const membros = MEMBERS_DISTRIBUTION.map(m => {
+    const tab   = getTabByEmail(m.email) ?? m.nome
+    const stats = memMap[tab] ?? { conexoes: 0, aceitas: 0, responderam: 0, rds: 0 }
+    return { email: m.email, nome: m.nome, ...stats }
+  })
 
   const pendentesEnriquecimento = leadsCSV.filter(
     l => parseDecisoresInfo(l.decisores_linkedin).status === 'pendente_enriquecimento',
   ).length
 
   return Response.json({
-    statusCounts,
-    membros,
-    taxaAceitacao,
-    taxaResposta,
-    totalLeads: data.length,
+    mesSelecionado: mesSel,
+    mesesDisponiveis,
+    conexoes, aceitas, responderam, rds, contratos,
+    taxaAceitacao, taxaResposta,
+    funil, porMembro, historico, membros,
     pendentesEnriquecimento,
   })
 }

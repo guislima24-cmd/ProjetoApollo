@@ -96,6 +96,38 @@ export async function appendMemberTabRow(
   return match ? parseInt(match[1], 10) : -1
 }
 
+// ── Leitura leve para o dashboard (inclui linhas sem sys_id) ─────────────────
+
+export interface TabSummaryRow {
+  data_conexao: string  // col I (idx 8) — DD/MM/AAAA
+  marcou_rd:    string  // col K (idx 10)
+  contrato:     string  // col Q (idx 16)
+  sys_status:   string  // col W (idx 22) — vazio nas linhas antigas
+}
+
+export async function readTabSummary(tabName: string): Promise<TabSummaryRow[]> {
+  const sheets        = getSheets()
+  const spreadsheetId = getSpreadsheetId()
+
+  const res = await withRetry(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${tabName}'!A:W`,
+    }),
+  )
+
+  const rows = (res.data.values ?? []) as string[][]
+  return rows
+    .slice(1)
+    .filter(row => (row[8] ?? '').trim() !== '')
+    .map(row => ({
+      data_conexao: row[8]  ?? '',
+      marcou_rd:    row[10] ?? '',
+      contrato:     row[16] ?? '',
+      sys_status:   row[22] ?? '',
+    }))
+}
+
 export async function updateMemberTabRow(
   tabName:  string,
   sheetRow: number,
